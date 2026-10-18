@@ -1,5 +1,5 @@
 ; Inno Setup script for MediaConverter-Setup.exe. Run through build\build.ps1, which passes AppVersion.
-; Installs per user (no administrator prompt), so the app can also update itself silently.
+; Installs per user, so no administrator password is needed.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -13,7 +13,6 @@ AppVerName=Media Converter {#AppVersion}
 AppPublisher=anglerequip
 AppPublisherURL=https://github.com/anglerequip/media-converter
 AppSupportURL=https://github.com/anglerequip/media-converter/issues
-AppUpdatesURL=https://github.com/anglerequip/media-converter/releases
 DefaultDirName={localappdata}\Programs\Media Converter
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
@@ -28,7 +27,7 @@ SolidCompression=yes
 LZMAUseSeparateProcess=yes
 LZMANumBlockThreads=2
 WizardStyle=modern
-; An update closes the running app first; the [Run] entry below starts it again.
+; Installing over a running copy closes it first, so no file is left half-replaced.
 CloseApplications=force
 RestartApplications=no
 ArchitecturesAllowed=x64compatible
@@ -43,9 +42,10 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [InstallDelete]
-; Remove the previous version's libraries so an update never mixes old and new files.
-Type: filesandordirs; Name: "{app}\_internal"
-Type: filesandordirs; Name: "{app}\ffmpeg"
+; Remove the previous version's libraries so a reinstall never mixes old and new files. Only done when the
+; folder already holds MediaConverter.exe, so a hand-picked folder's own "ffmpeg" or "_internal" is never touched.
+Type: filesandordirs; Name: "{app}\_internal"; Check: IsMediaConverterFolder
+Type: filesandordirs; Name: "{app}\ffmpeg"; Check: IsMediaConverterFolder
 
 [Files]
 Source: "..\dist\MediaConverter\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -54,6 +54,12 @@ Source: "..\dist\MediaConverter\*"; DestDir: "{app}"; Flags: ignoreversion recur
 Name: "{autoprograms}\Media Converter"; Filename: "{app}\MediaConverter.exe"
 Name: "{autodesktop}\Media Converter"; Filename: "{app}\MediaConverter.exe"; Tasks: desktopicon
 
+[Code]
+function IsMediaConverterFolder: Boolean;
+begin
+  Result := FileExists(ExpandConstant('{app}\MediaConverter.exe'));
+end;
+
 [Run]
-; Also runs after a silent update, which is how the app reopens itself.
-Filename: "{app}\MediaConverter.exe"; Description: "{cm:LaunchProgram,Media Converter}"; Flags: nowait postinstall
+; The "Launch Media Converter" checkbox on the last page.
+Filename: "{app}\MediaConverter.exe"; Description: "{cm:LaunchProgram,Media Converter}"; Flags: nowait postinstall skipifsilent

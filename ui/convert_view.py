@@ -18,7 +18,7 @@ from converter.formats import (
 from . import motion as M
 from . import theme as T
 from .widgets import (
-    DashedPanel, FileCard, Segmented, SmoothProgress, Tooltip, chip, fit_text, ghost_button, human_size,
+    DashedPanel, FileCard, Segmented, icon_circle, SmoothProgress, Tooltip, chip, fit_text, ghost_button, human_size,
     primary_button, secondary_button, set_primary_enabled, style_chip,
 )
 
@@ -115,8 +115,7 @@ class DropZone(DashedPanel):
 
         # full layout
         self.full = ctk.CTkFrame(b, fg_color=T.SURFACE)
-        self.full_icon = ctk.CTkLabel(self.full, text="", width=64, height=64, corner_radius=32, fg_color=T.ACCENT_SOFT,
-                                      image=T.icon("upload", 28, T.ACCENT_TEXT))
+        self.full_icon = icon_circle(self.full, "upload", 64, 28)
         self.full_icon.grid(row=0, column=0, columnspan=2, pady=(0, 14))
         ctk.CTkLabel(self.full, text="Drop your files here", font=T.font(18, "semibold"), text_color=T.TEXT).grid(
             row=1, column=0, columnspan=2)
@@ -135,8 +134,7 @@ class DropZone(DashedPanel):
         # compact layout
         self.slim = ctk.CTkFrame(b, fg_color=T.SURFACE)
         self.slim.grid_columnconfigure(1, weight=1)
-        self.slim_icon = ctk.CTkLabel(self.slim, text="", width=34, height=34, corner_radius=17, fg_color=T.ACCENT_SOFT,
-                                      image=T.icon("upload", 17, T.ACCENT_TEXT))
+        self.slim_icon = icon_circle(self.slim, "upload", 34, 17)
         self.slim_icon.grid(row=0, column=0, rowspan=2, padx=(8, 10))
         ctk.CTkLabel(self.slim, text="Add more files", font=T.font(13, "semibold"), text_color=T.TEXT, anchor="w",
                      height=18).grid(row=0, column=1, sticky="sw")

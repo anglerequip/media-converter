@@ -1,0 +1,92 @@
+# Builds Media Converter from this repository on a clean GitHub-hosted Windows machine.
+#
+# - Pushing a tag like v3.2.0 builds, self-tests and publishes the GitHub Release.
+#   The release files are exactly what this public log shows being built from that commit.
+# - "Run workflow" on the Actions tab builds and self-tests without publishing; the result can be
+#   downloaded from the run page to compare with a release.
+#
+# Every action is pinned to a full commit SHA so its code can't change underneath this workflow.
+
+name: Build and release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    permissions:
+      contents: write       # publish the GitHub Release
+      id-token: write       # sign the build provenance
+      attestations: write   # store the build provenance
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12.10
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12.10"
+
+      - name: Check the tag matches the app's version number
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $v = python -c "from converter import __version__; print(__version__)"
+          if ("v$v" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} does not match converter/__init__.py version $v" }
+
+      - name: Build (build/build.ps1)
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File build\build.ps1
+
+      - name: Self-test the built app
+        shell: pwsh
+        run: |
+          $report = Join-Path $env:RUNNER_TEMP "selftest.json"
+          $p = Start-Process dist\MediaConverter\MediaConverter.exe -ArgumentList "--self-test", $report -PassThru
+          $p.WaitForExit()
+          Get-Content $report
+          if ($p.ExitCode -ne 0) { throw "The self-test failed" }
+
+      - name: Show fingerprints and build record
+        shell: pwsh
+        run: Get-Content dist\BUILD-INFO.txt
+
+      - name: Record build provenance (public repositories)
+        if: startsWith(github.ref, 'refs/tags/') && github.event.repository.visibility == 'public'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: |
+            dist/MediaConverter-Setup.exe
+            dist/MediaConverter-portable.zip
+
+      - name: Publish the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = "build/release-notes/${{ github.ref_name }}.md"
+          gh release create "${{ github.ref_name }}" `
+            dist/MediaConverter-Setup.exe dist/MediaConverter-portable.zip dist/SHA256SUMS.txt dist/BUILD-INFO.txt `
+            --title ("Media Converter " + "${{ github.ref_name }}".TrimStart("v")) --notes-file $notes --verify-tag
+
+      - name: Keep the files from a manual run
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: MediaConverter-test-build
+          path: |
+            dist/MediaConverter-Setup.exe
+            dist/MediaConverter-portable.zip
+            dist/SHA256SUMS.txt
+            dist/BUILD-INFO.txt
+          retention-days: 14

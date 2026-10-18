@@ -28,7 +28,9 @@ try:
 except ImportError:
     HEIF_OK = False
 
-Image.MAX_IMAGE_PIXELS = None  # allow very large photos and scans
+# Pillow refuses images that claim more than twice this many pixels ("decompression bombs" that would
+# exhaust memory). 250 megapixels still allows huge panoramas and scans.
+Image.MAX_IMAGE_PIXELS = 250_000_000
 
 QUALITIES = ["lossless", "max", "high", "balanced", "small"]
 QUALITY_LABELS = {
@@ -78,8 +80,10 @@ def convert(
     cancel: threading.Event | None = None,
 ) -> Path:
     """Convert one file. Returns the path of the new file."""
-    src = Path(src)
+    src = Path(src).resolve()
     opts = opts or Options()
+    if opts.out_dir:
+        opts.out_dir = Path(opts.out_dir).resolve()
     progress = progress or _noop
     target = normalise_ext(target)
     if not src.is_file():
@@ -114,6 +118,10 @@ def convert(
     except (Cancelled, ConversionError):
         out.unlink(missing_ok=True)
         raise
+    except Image.DecompressionBombError as exc:
+        out.unlink(missing_ok=True)
+        raise ConversionError("This image is far larger than any real photo (over 500 megapixels), so it was not "
+                              "opened. Very large images like this can be used to crash programs.") from exc
     except Exception as exc:  # Pillow and OS errors: report them in plain words
         out.unlink(missing_ok=True)
         raise ConversionError(f"{type(exc).__name__}: {exc}") from exc

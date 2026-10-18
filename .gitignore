@@ -10,3 +10,4 @@ tools/*.exe
 build/work/
 build/version_info.txt
 dist/
+build/cache/

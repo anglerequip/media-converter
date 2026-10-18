@@ -10,6 +10,7 @@ Podcast episodes and shows are not copy-protected in most cases, so those go str
 
 from __future__ import annotations
 
+import glob
 import json
 import re
 import subprocess
@@ -71,8 +72,13 @@ def is_spotify(url: str) -> bool:
 
 
 def _get(url: str, timeout: int = 20) -> bytes:
+    # Only Spotify's own pages and image servers, and only over https: nothing else can be fetched from here.
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname or ""
+    if parsed.scheme != "https" or not (host == "open.spotify.com" or host.endswith(_COVER_HOSTS)):
+        raise ConversionError("Refused to contact an unexpected address.")
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=_UA), timeout=timeout) as r:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=_UA), timeout=timeout) as r:  # nosec B310
             return r.read()
     except Exception as exc:
         raise ConversionError("Couldn't reach Spotify. Check your internet connection and try again.") from exc
@@ -90,8 +96,16 @@ def _entity(kind: str, ident: str) -> dict:
 
 def _cover(entity: dict) -> str:
     images = (entity.get("visualIdentity") or {}).get("image") or entity.get("coverArt", {}).get("sources") or []
-    images = [i for i in images if i.get("url")]
+    images = [i for i in images if _cover_allowed(i.get("url", ""))]
     return max(images, key=lambda i: i.get("maxWidth") or i.get("width") or 0)["url"] if images else ""
+
+
+_COVER_HOSTS = (".spotifycdn.com", ".scdn.co")
+
+
+def _cover_allowed(url: str) -> bool:
+    parsed = urllib.parse.urlparse(url or "")
+    return parsed.scheme == "https" and any((parsed.hostname or "").endswith(h) for h in _COVER_HOSTS)
 
 
 def _artists(text: str) -> list[str]:
@@ -234,9 +248,15 @@ def find_match(track: Track, cancel: threading.Event | None = None) -> dict:
 # ----------------------------------------------------------------------------- saving
 
 
+_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+
+
 def _safe(name: str) -> str:
-    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", name).strip(" .")
-    return name[:150] or "Untitled"
+    """A file or folder name that is valid on Windows and can't point outside the chosen folder."""
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", name).strip(" .")[:150].strip(" .")
+    if name.split(".")[0].upper() in _RESERVED:
+        name = "_" + name
+    return name or "Untitled"
 
 
 def _tag(path: Path, track: Track, cover: bytes | None) -> None:
@@ -310,7 +330,7 @@ def _download_audio(video: dict, folder: Path, filename: str, fmt: str, progress
             raise Cancelled() from exc
         except yt_dlp.utils.DownloadError as exc:
             last_error = str(exc).replace("ERROR: ", "")
-            for leftover in folder.glob(filename + ".*"):
+            for leftover in folder.glob(glob.escape(filename) + ".*"):
                 leftover.unlink(missing_ok=True)
             if cancel is not None and cancel.is_set():
                 raise Cancelled() from exc
@@ -333,19 +353,64 @@ class Result:
     name: str = ""
 
 
+def target_folder(collection: Collection, out_dir: str | Path) -> Path:
+    """Albums and playlists get their own folder; single songs go straight into the chosen folder."""
+    folder = Path(out_dir)
+    if collection.kind in ("album", "playlist"):
+        folder = folder / _safe(collection.name)
+    return folder
+
+
+def file_name(track: Track) -> str:
+    return _safe(f"{track.artists[0] if track.artists else 'Unknown'} - {track.title}")
+
+
+_THUMB_HOSTS = (".ytimg.com", ".googleusercontent.com", ".ggpht.com")
+
+
+def thumbnail_bytes(video: dict) -> bytes | None:
+    """The video's thumbnail for the match card, only from YouTube's own image servers over https."""
+    candidates = [t.get("url") for t in sorted(video.get("thumbnails") or [], key=lambda t: t.get("width") or 0)
+                  if (t.get("width") or 0) >= 300] + [video.get("thumbnail")]
+    for url in candidates:
+        parsed = urllib.parse.urlparse(url or "")
+        if parsed.scheme == "https" and (parsed.hostname or "").endswith(_THUMB_HOSTS):
+            try:
+                with urllib.request.urlopen(urllib.request.Request(url, headers=_UA), timeout=15) as r:  # nosec B310
+                    return r.read(5_000_000)
+            except Exception:
+                continue
+    return None
+
+
+def save_match(track: Track, video: dict, folder: Path, fmt: str, progress: ProgressFn,
+               cancel: threading.Event | None = None) -> Path:
+    """Download a confirmed match and write Spotify's details and cover into it."""
+    folder.mkdir(parents=True, exist_ok=True)
+    path = _download_audio(video, folder, file_name(track), fmt, progress, cancel)
+    progress(0.995, "Adding title, artist and cover")
+    _fill_track_details(track)
+    if not track.album:
+        track.album = video.get("album") or ""
+    cover = None
+    if track.cover_url and _cover_allowed(track.cover_url):
+        try:
+            cover = _get(track.cover_url)
+        except ConversionError:
+            cover = None
+    _tag(path, track, cover)
+    return path
+
+
 def download(url: str, out_dir: str | Path, fmt: str = "m4a", progress: ProgressFn | None = None,
              cancel: threading.Event | None = None, on_saved: Callable[[Path], None] | None = None) -> Result:
-    """Save a Spotify song, album or playlist. fmt is 'm4a' (original quality) or 'mp3' (320 kbps)."""
+    """Search and save a whole Spotify link without asking (used by the command line)."""
     progress = progress or (lambda f, t: None)
     progress(0.0, "Reading the Spotify link")
     collection = read(url)
     if not collection.tracks:
         raise ConversionError("This Spotify link has no songs in it.")
-    folder = Path(out_dir)
-    if collection.kind in ("album", "playlist"):
-        folder = folder / _safe(collection.name)
-    folder.mkdir(parents=True, exist_ok=True)
-
+    folder = target_folder(collection, out_dir)
     result = Result(truncated=collection.truncated, name=collection.name)
     total = len(collection.tracks)
     for i, track in enumerate(collection.tracks):
@@ -354,8 +419,7 @@ def download(url: str, out_dir: str | Path, fmt: str = "m4a", progress: Progress
         label = f"{', '.join(track.artists[:2])} – {track.title}"
         prefix = f"Song {i + 1} of {total}: " if total > 1 else ""
         step = lambda f, text, i=i: progress((i + f) / total, f"{prefix}{label} · {text}")  # noqa: E731
-        filename = _safe(f"{track.artists[0] if track.artists else 'Unknown'} - {track.title}")
-        if (folder / f"{filename}.{fmt}").exists():
+        if (folder / f"{file_name(track)}.{fmt}").exists():
             result.skipped_existing.append(label)
             continue
         step(0.02, "Finding the song")
@@ -365,18 +429,7 @@ def download(url: str, out_dir: str | Path, fmt: str = "m4a", progress: Progress
             result.no_match.append(f"{label}: {exc}")
             continue
         try:
-            path = _download_audio(video, folder, filename, fmt, step, cancel)
-            step(0.995, "Adding title, artist and cover")
-            _fill_track_details(track)
-            if not track.album:
-                track.album = video.get("album") or ""
-            cover = None
-            if track.cover_url:
-                try:
-                    cover = _get(track.cover_url)
-                except ConversionError:
-                    cover = None
-            _tag(path, track, cover)
+            path = save_match(track, video, folder, fmt, step, cancel)
             result.saved.append(path)
             if on_saved:
                 on_saved(path)

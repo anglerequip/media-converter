@@ -17,6 +17,7 @@ from converter.ffmpeg_tools import Cancelled, ConversionError
 from . import motion as M
 from . import theme as T
 from .convert_view import help_text, section_title, switch
+from .spotify_flow import SpotifyFlow
 from .widgets import (
     Segmented, SmoothProgress, Tooltip, fit_text, ghost_button, human_size, primary_button,
     secondary_button, set_primary_enabled,
@@ -61,7 +62,7 @@ def friendly_error(message: str) -> str:
     if "drm" in m:
         return "This video is copy-protected (DRM) and can't be downloaded."
     first = message.strip().splitlines()[0] if message.strip() else "Unknown error"
-    return f"{first[:180]} If this keeps happening, try Settings → Update downloader."
+    return f"{first[:180]} If this keeps happening, the site may have changed; a newer Media Converter from the project page may fix it."
 
 
 class DownloadView(ctk.CTkFrame):
@@ -80,8 +81,10 @@ class DownloadView(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=0, minsize=340)
         self.grid_rowconfigure(0, weight=1)
+        self._job_cancel: threading.Event | None = None
         self._build_main()
         self._build_history()
+        self.spotify = SpotifyFlow(self)
         threading.Thread(target=self._load_extractors, daemon=True).start()
         self.after(80, self._drain)
         self._validate()
@@ -92,17 +95,16 @@ class DownloadView(ctk.CTkFrame):
         card = ctk.CTkFrame(self, fg_color=T.SURFACE, corner_radius=T.RADIUS_LARGE, border_width=1, border_color=T.BORDER)
         card.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         card.grid_columnconfigure(0, weight=1)
-        inner = ctk.CTkFrame(card, fg_color="transparent")
+        inner = self.inner = ctk.CTkFrame(card, fg_color="transparent")
         inner.grid(row=0, column=0, sticky="nsew", padx=24, pady=22)
         inner.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(inner, text="Download a video from a link", font=T.font(18, "semibold"), text_color=T.TEXT,
                      anchor="w").grid(row=0, column=0, sticky="w")
-        help_text(inner, "Works with YouTube, TikTok, Instagram, X, Reddit, Vimeo, SoundCloud and many other sites. "
-                         "The link is checked as you type.").grid(row=1, column=0, sticky="w", pady=(2, 18))
-        inner.grid_rowconfigure(1, minsize=0)
-        for w in inner.grid_slaves(row=1):
-            w.configure(wraplength=560)
+        self.subtitle = help_text(inner, "Works with YouTube, TikTok, Instagram, X, Reddit, Vimeo, SoundCloud and many "
+                                         "other sites. The link is checked as you type.")
+        self.subtitle.configure(wraplength=560)
+        self.subtitle.grid(row=1, column=0, sticky="w", pady=(2, 18))
 
         section_title(inner, "Video link").grid(row=2, column=0, sticky="w", pady=(0, 6))
         row = ctk.CTkFrame(inner, fg_color="transparent")
@@ -176,9 +178,10 @@ class DownloadView(ctk.CTkFrame):
         self.dl_btn.configure(font=T.font(14, "semibold"))
         self.dl_btn.grid(row=0, column=2, rowspan=2, padx=(6, 0))
 
-        help_text(inner, "Only download videos you own or have permission to save, and follow each site's terms. "
-                         "Private, paid and copy-protected videos are not supported.", colour=T.FAINT).grid(
-            row=13, column=0, sticky="w", pady=(18, 0))
+        self.footnote = help_text(inner, "Only download videos you own or have permission to save, and follow each "
+                                         "site's terms. Private, paid and copy-protected videos are not supported.",
+                                  colour=T.FAINT)
+        self.footnote.grid(row=13, column=0, sticky="w", pady=(18, 0))
         self._on_mode(self.mode.get(), save=False)
 
     def _build_history(self) -> None:
@@ -287,7 +290,7 @@ class DownloadView(ctk.CTkFrame):
                     name = SITE_NAMES.get(key, ie.IE_NAME.split(":")[0].replace("_", " ").title())
                     if not ie.working():
                         self._show_check("warn", f"{name} link. This site's downloader is currently marked as broken, "
-                                                 "so it may fail. Try Settings → Update downloader.")
+                                                 "so it may fail. A newer Media Converter from the project page may fix it.")
                     else:
                         self._show_check("ok", f"{name} link recognised.")
                 elif parsed.path.lower().endswith(MEDIA_EXTS):
@@ -352,6 +355,11 @@ class DownloadView(ctk.CTkFrame):
         if self.busy or not self.url_ok:
             return
         url = self._clean_url()
+        if self._spotify_music():
+            mode = self.mode.get()
+            self.spotify.begin(url, mode if mode in ("mp3", "m4a") else "m4a")
+            return
+        self._job_cancel = None
         self.busy = True
         self.app.set_busy(True)
         self.cancel_event.clear()
@@ -362,17 +370,12 @@ class DownloadView(ctk.CTkFrame):
         self.bar.jump(0)
         self.status.configure(text="Connecting…", text_color=T.MUTED)
         mode = self.mode.get()
-        if self._spotify_music():
-            fmt = mode if mode in ("mp3", "m4a") else "m4a"
-            self.status.configure(text="Reading the Spotify link…", text_color=T.MUTED)
-            threading.Thread(target=self._spotify_worker, args=(url, fmt), daemon=True).start()
-            return
         playlist = bool(self.playlist.get()) and bool(self.playlist.winfo_ismapped())
         threading.Thread(target=self._worker, args=(url, mode, playlist), daemon=True).start()
 
     def cancel(self) -> None:
         if self.busy:
-            self.cancel_event.set()
+            (self._job_cancel or self.cancel_event).set()
             self.cancel_btn.configure(state="disabled", text="Cancelling…", image=T.blank(15))
 
     def _worker(self, url: str, mode: str, playlist: bool) -> None:
@@ -392,49 +395,52 @@ class DownloadView(ctk.CTkFrame):
         except Exception as exc:
             self.events.put(("failed", friendly_error(f"{type(exc).__name__}: {exc}")))
 
-    def _spotify_worker(self, url: str, fmt: str) -> None:
-        def progress(fraction: float, text: str) -> None:
-            self.events.put(("progress", fraction, text))
+    # -- used by the Spotify flow
 
-        try:
-            result = spotify.download(url, self.dl_dir, fmt, progress, self.cancel_event,
-                                      on_saved=lambda path: self.events.put(("saved", path)))
-            self.events.put(("spotify_done", result))
-        except Cancelled:
-            self.events.put(("cancelled",))
-        except ConversionError as exc:
-            self.events.put(("failed", friendly_error(str(exc))))
-        except Exception as exc:
-            self.events.put(("failed", friendly_error(f"{type(exc).__name__}: {exc}")))
+    def set_status(self, text: str, colour=T.MUTED) -> None:
+        self.status.configure(text=text, text_color=colour)
 
-    def _spotify_summary(self, result) -> None:
-        saved, missing, failed, existing = (len(result.saved), len(result.no_match), len(result.failed),
-                                            len(result.skipped_existing))
-        parts = [f"Saved {saved} song{'s' if saved != 1 else ''}"]
-        if existing:
-            parts.append(f"{existing} already saved")
-        if missing:
-            parts.append(f"{missing} not found")
-        if failed:
-            parts.append(f"{failed} failed")
-        tone_ok = not missing and not failed
-        self.status.configure(text=", ".join(parts) + ".", text_color=T.SUCCESS if tone_ok else T.WARNING)
-        notes = []
-        if missing:
-            names = [m.split(":")[0] for m in result.no_match[:3]]
-            notes.append("No confident match on YouTube Music for: " + "; ".join(names)
-                         + (f" and {missing - 3} more" if missing > 3 else "") + ". These were skipped rather than guessed.")
-        if failed:
-            notes.append("Couldn't download: " + "; ".join(f.split(":")[0] for f in result.failed[:3]) + ".")
-        if result.truncated:
-            notes.append(f"Spotify only shares the first {spotify.PLAYLIST_LIMIT} songs of a playlist.")
-        if notes:
-            self._show_check("warn", " ".join(notes))
-        else:
-            self._show_check(None, "")
-        if saved:
-            self.entry.delete(0, "end")
-        self.app.notify_done(saved, missing + failed)
+    def set_progress(self, fraction: float, text: str) -> None:
+        if not self.bar.winfo_ismapped():
+            self.bar.grid()
+        self.bar.glide(fraction)
+        self.status.configure(text=fit_text(text, T.font(12), 520), text_color=T.MUTED)
+
+    def job_started(self, cancel: threading.Event) -> None:
+        self._job_cancel = cancel
+        self.busy = True
+        self.app.set_busy(True)
+        set_primary_enabled(self.dl_btn, False)
+        self.cancel_btn.grid()
+        self.cancel_btn.configure(state="normal", text="Cancel", image=T.icon("stop", 15, T.ERROR))
+        self.bar.grid()
+        self.bar.jump(0)
+        self.compact(True)
+
+    def job_finished(self, text: str, colour, check: tuple[str, str] | None = None) -> None:
+        self.busy = False
+        self.app.set_busy(False)
+        self.cancel_btn.grid_remove()
+        self.bar.glide(1.0)
+        self.after(800, self.bar.grid_remove)
+        self.status.configure(text=text, text_color=colour)
+        if check:
+            self._show_check(*check)
+        set_primary_enabled(self.dl_btn, self.url_ok)
+        if not self.spotify.visible():
+            self.compact(False)
+
+    def add_history(self, path: Path) -> None:
+        self._add_history(path)
+
+    def compact(self, on: bool) -> None:
+        """Hide the longer explanations while Spotify results are shown, so the buttons stay in view."""
+        for widget in (self.subtitle, self.mode_text, self.footnote):
+            widget.grid_remove() if on else widget.grid()
+        if on and self.spotify.visible():
+            self.dl_btn.grid_remove()  # the results have their own Download buttons
+        elif not on:
+            self.dl_btn.grid()
 
     def _drain(self) -> None:
         try:
@@ -447,16 +453,11 @@ class DownloadView(ctk.CTkFrame):
                     self.bar.glide(ev[1])
                     self.status.configure(text=fit_text(f"{ev[2]}  ·  {ev[1] * 100:.0f}%", T.font(12), 520),
                                           text_color=T.MUTED)
-                elif kind == "saved":  # a Spotify song finished: show it straight away
-                    self._add_history(ev[1])
-                elif kind in ("done", "failed", "cancelled", "spotify_done"):
+                elif kind in ("done", "failed", "cancelled"):
                     self.busy = False
                     self.app.set_busy(False)
                     self.cancel_btn.grid_remove()
-                    if kind == "spotify_done":
-                        self.bar.glide(1.0)
-                        self._spotify_summary(ev[1])
-                    elif kind == "done":
+                    if kind == "done":
                         self.bar.glide(1.0)
                         for f in ev[1]:
                             self._add_history(f)

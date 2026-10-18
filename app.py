@@ -6,7 +6,6 @@ import json
 import os
 import subprocess
 import sys
-import threading
 import webbrowser
 from pathlib import Path
 from tkinter import messagebox
@@ -19,7 +18,7 @@ try:
 except ImportError:  # drag and drop is optional; the buttons always work
     TkinterDnD = None
 
-from converter import __version__, updater
+from converter import __version__
 from converter.ffmpeg_tools import find_tool
 from ui import motion as M
 from ui import theme as T
@@ -155,13 +154,8 @@ class App(ctk.CTk):
         gear = ghost_button(right, icon_name="settings", command=self.open_settings, height=34, colour=T.MUTED,
                             bg=T.SURFACE_ALT, width=38)
         gear.configure(border_width=1, border_color=T.BORDER, corner_radius=T.RADIUS)
-        gear.grid(row=0, column=2)
+        gear.grid(row=0, column=1)
         Tooltip(gear, "Settings")
-        upd = ghost_button(right, icon_name="refresh", command=self.check_for_updates, height=34, colour=T.MUTED,
-                           bg=T.SURFACE_ALT, width=38)
-        upd.configure(border_width=1, border_color=T.BORDER, corner_radius=T.RADIUS)
-        upd.grid(row=0, column=1, padx=(0, 6))
-        Tooltip(upd, "Check for updates")
 
     def show_view(self, name: str) -> None:
         if name not in ("convert", "download"):
@@ -234,8 +228,9 @@ class App(ctk.CTk):
     def reveal(self, path: Path) -> None:
         path = Path(path)
         if sys.platform == "win32":
-            if path.is_file():
-                subprocess.Popen(["explorer", "/select,", str(path)])
+            if path.is_file():  # full path to Explorer, so no other "explorer.exe" on the search path can run
+                explorer = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "explorer.exe")
+                subprocess.Popen([explorer, "/select,", str(path)])
             elif path.exists():
                 os.startfile(path)  # noqa: S606
         else:
@@ -309,7 +304,7 @@ class App(ctk.CTk):
             return
         win = self._settings_win = ctk.CTkToplevel(self, fg_color=T.BG)
         win.title("Settings")
-        win.geometry(f"460x720+{self.winfo_rootx() + self.winfo_width() - 500}+{self.winfo_rooty() + 60}")
+        win.geometry(f"460x600+{self.winfo_rootx() + self.winfo_width() - 500}+{self.winfo_rooty() + 70}")
         win.resizable(False, False)
         win.transient(self)
         M.window_fade_in(win, 160)
@@ -369,49 +364,8 @@ class App(ctk.CTk):
             version = yt_dlp.version.__version__
         except Exception:
             version = "not installed"
-        yt_note = note(c, f"yt-dlp {version}. Sites change often; if downloads from one start failing, update it here.")
-        status = note(c, "", row=3)
-        btn = ctk.CTkButton(c, text="Update now", width=120, height=32, corner_radius=T.RADIUS_SMALL, fg_color=T.ACCENT,
-                            hover_color=T.ACCENT_HOVER, font=T.font(12, "semibold"),
-                            image=T.icon("refresh", 15, T.ON_ACCENT), compound="left")
-        btn.grid(row=2, column=0, sticky="w", padx=16, pady=(2, 8))
-
-        def update() -> None:
-            btn.configure(state="disabled", text="Updating…")
-            status.configure(text="Downloading the latest version…", text_color=T.MUTED)
-
-            def work() -> None:
-                python = Path(sys.executable)
-                if python.name.lower() == "pythonw.exe" and (python.parent / "python.exe").exists():
-                    python = python.parent / "python.exe"
-                r = subprocess.run([str(python), "-m", "pip", "install", "-U", "--pre", "--disable-pip-version-check",
-                                    "yt-dlp[default,curl-cffi]"], capture_output=True, text=True, stdin=subprocess.DEVNULL,
-                                   creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
-                ok = r.returncode == 0
-                msg = "Updated. Restart Media Converter to use the new version." if ok else \
-                    "Update failed: " + ((r.stderr or "").strip().splitlines() or ["unknown error"])[-1]
-                result.append((ok, msg))
-
-            result: list = []
-
-            def wait() -> None:
-                if not win.winfo_exists():
-                    return
-                if not result:
-                    win.after(200, wait)
-                    return
-                ok, msg = result[0]
-                status.configure(text=msg, text_color=T.SUCCESS if ok else T.ERROR)
-                btn.configure(state="normal", text="Update now")
-
-            threading.Thread(target=work, daemon=True).start()
-            wait()
-
-        btn.configure(command=update)
-        if updater.FROZEN:  # the packaged app can't pip-install; yt-dlp arrives with each app update instead
-            btn.grid_remove()
-            yt_note.configure(text=f"yt-dlp {version}. It is updated together with Media Converter: if downloads "
-                                   "from a site start failing, use Check for updates below.")
+        note(c, f"yt-dlp {version} is built in. Media Converter never updates itself or anything else; if downloads "
+                "from a site stop working, download the newest Media Converter from the project page.")
 
         c = card(2, "FFmpeg")
         ff = find_tool("ffmpeg")
@@ -423,22 +377,11 @@ class App(ctk.CTk):
             note(c, "Not found. Install it by running this in a terminal, then restart the app:", T.ERROR)
             note(c, "winget install Gyan.FFmpeg", T.TEXT, row=2)
 
-        c = card(3, "Updates and about")
-        note(c, f"Media Converter {__version__}. Everything is processed on this computer; files are never uploaded.")
-        upd_btn = ctk.CTkButton(c, text="Check for updates", width=150, height=32, corner_radius=T.RADIUS_SMALL,
-                                fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER, font=T.font(12, "semibold"),
-                                image=T.icon("refresh", 15, T.ON_ACCENT), compound="left")
-        upd_btn.grid(row=2, column=0, sticky="w", padx=16, pady=(2, 4))
-        upd_status = note(c, "", row=3)
-        colours = {"info": T.MUTED, "success": T.SUCCESS, "warning": T.WARNING, "error": T.ERROR}
-
-        def report(text: str, tone: str) -> None:
-            if win.winfo_exists():
-                upd_status.configure(text=text, text_color=colours.get(tone, T.MUTED))
-
-        upd_btn.configure(command=lambda: self.check_for_updates(report))
+        c = card(3, "About")
+        note(c, f"Media Converter {__version__}. Works offline: files are converted on this computer and never "
+                "uploaded, and the app only goes online when you download from a link.")
         links = ctk.CTkFrame(c, fg_color="transparent")
-        links.grid(row=4, column=0, sticky="w", padx=10, pady=(0, 12))
+        links.grid(row=2, column=0, sticky="w", padx=10, pady=(0, 12))
         ghost_button(links, "Project page", lambda: webbrowser.open(REPO_URL), colour=T.ACCENT_TEXT).grid(row=0, column=0)
 
         def reset() -> None:
@@ -450,99 +393,6 @@ class App(ctk.CTk):
 
         ghost_button(links, "Reset all settings", reset, colour=T.ERROR).grid(row=0, column=1, padx=6)
         win.after(100, win.lift)
-
-    # ------------------------------------------------------------------ updates
-
-    def check_for_updates(self, report=None) -> None:
-        """Ask GitHub for the newest version; if there is one, let the user decide whether to install it."""
-        if getattr(self, "_updating", False):
-            return
-        self._updating = True
-        say = report or (lambda text, tone, ms=4500: self.toast(text, tone, ms))
-        parent = self._settings_win if getattr(self, "_settings_win", None) is not None and \
-            self._settings_win.winfo_exists() else self
-
-        def background(work, then) -> None:
-            box: list = []
-
-            def run() -> None:
-                try:
-                    box.append((True, work()))
-                except Exception as exc:  # UpdateError carries a readable message
-                    box.append((False, exc))
-
-            def wait() -> None:
-                if box:
-                    then(*box[0])
-                else:
-                    self.after(150, wait)
-
-            threading.Thread(target=run, daemon=True).start()
-            wait()
-
-        def finished() -> None:
-            self._updating = False
-
-        def checked(ok: bool, value) -> None:
-            if not ok:
-                say(str(value) if isinstance(value, updater.UpdateError) else "Couldn't check for updates.", "error")
-                return finished()
-            remote, notes = value
-            if not updater.is_newer(remote):
-                say(f"You're up to date. Version {__version__} is the latest.", "success")
-                return finished()
-            say(f"Version {remote} is available.", "info")
-            changes = "".join(f"\n  •  {n}" for n in notes[:4])
-            if updater.FROZEN and updater.is_installed_copy():
-                action = "Download and install it now? Media Converter will close, update itself and open again."
-            elif updater.FROZEN:
-                action = "Open the download page now?"
-            else:
-                action = "Download and install it now?"
-            question = (f"Version {remote} of Media Converter is available. You have version {__version__}."
-                        + (f"\n\nRecent changes:{changes}" if changes else "") + f"\n\n{action}")
-            if not messagebox.askyesno("Update available", question, parent=parent):
-                say("Update skipped. You can update any time from here.", "info")
-                return finished()
-            if self.busy_count:
-                messagebox.showinfo("Update", "Finish or cancel the current conversion or download first, "
-                                              "then check for updates again.", parent=parent)
-                say("Update postponed until the current job is finished.", "warning")
-                return finished()
-            progress_lines: list[str] = []
-
-            def progress(text: str) -> None:
-                progress_lines.append(text)
-
-            def show_progress() -> None:
-                if getattr(self, "_updating", False):
-                    if progress_lines:
-                        say(progress_lines[-1], "info", 60000) if report is None else say(progress_lines[-1], "info")
-                    self.after(250, show_progress)
-
-            show_progress()
-            background(lambda: updater.install_update(progress), lambda ok2, result: installed(ok2, result, remote))
-
-        def installed(ok: bool, result, remote: str) -> None:
-            finished()
-            if not ok:
-                say(str(result) if isinstance(result, updater.UpdateError) else f"The update failed: {result}", "error")
-                return
-            if result == updater.INSTALLER_STARTED:  # the installer needs this window gone; it reopens the app
-                self._save_and_close()
-                return
-            if updater.FROZEN:  # portable copy: the download page was opened instead
-                say("The download page is open in your browser.", "info")
-                messagebox.showinfo("Update", result, parent=parent)
-                return
-            say(f"Version {remote} is installed. Restart to start using it.", "success")
-            if messagebox.askyesno("Update installed", f"{result}\n\nRestart Media Converter now to use version {remote}?",
-                                   parent=parent):
-                updater.restart()
-                self._save_and_close()
-
-        say("Checking for updates…", "info")
-        background(updater.latest_version, checked)
 
     # ------------------------------------------------------------------ closing
 

@@ -26,7 +26,8 @@ Free, open source and private: everything runs on your own PC.</p>
 - **Maximum quality by default**, with simple Smaller / Balanced / High / Maximum choices
 - **No needless re-encoding:** MKV → MP4 and similar changes are instant and lossless
 - **Batches:** drag in files or whole folders and see progress and space saved
-- **Light and dark mode**, smooth animations and one-click updates
+- **Works offline:** files are converted on your PC and never uploaded; the app never updates itself or connects in the background, and goes online only when you download from a link
+- **Light and dark mode** and smooth animations
 
 ## Install
 
@@ -34,7 +35,7 @@ Free, open source and private: everything runs on your own PC.</p>
 2. If Windows shows *"Windows protected your PC"*, click **More info → Run anyway**. This appears because the app isn't signed with a paid certificate.
 3. Open **Media Converter** from the Start menu or the Desktop.
 
-To update, click the **↻** button in the top-right corner of the app.
+The app never updates itself. For a newer version, download it again from this page; installing over the old one keeps your settings.
 
 ## How to use
 
@@ -77,8 +78,8 @@ Drop files in, pick a format and press **Convert Files**. To save a video, paste
 
 - **Best video** picks the highest resolution offered; on YouTube that is often AV1 or VP9, which Windows 11 plays. Choose **Compatible video** (H.264) for older devices.
 - Private, age-restricted, members-only and copy-protected videos are not supported.
-- **Spotify:** Spotify's own audio is copy-protected and is never touched. The app reads each song's title, artist, length and cover from Spotify, finds the same recording on YouTube Music, and saves that audio with Spotify's details. A song is only saved when length, artist and title all match; otherwise it is skipped rather than guessed. M4A keeps YouTube's audio as it is (about 128 kbps AAC); MP3 converts it for older devices. Playlists are limited to their first 100 songs, and podcasts can't be saved because Spotify protects them.
-- If a site stops working, check for updates: each release ships with the newest yt-dlp.
+- **Spotify:** Spotify's own audio is copy-protected and is never touched. The app reads each song's title, artist, length and cover from Spotify and looks for the same recording on YouTube Music. Each match is shown with its thumbnail, title and a link so you can check it, and nothing is downloaded until you confirm. The saved file gets Spotify's details. A song is only saved when length, artist and title all match; otherwise it is skipped rather than guessed. M4A keeps YouTube's audio as it is (about 128 kbps AAC); MP3 converts it for older devices. Playlists are limited to their first 100 songs, and podcasts can't be saved because Spotify protects them.
+- If a site stops working, download the newest Media Converter from this page: each release ships with the newest yt-dlp.
 
 </details>
 
@@ -93,12 +94,13 @@ cd media-converter
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
-Build the installer and portable zip:
+Build the installer and portable zip exactly like the release (needs only Python 3.12; FFmpeg and Inno Setup are downloaded from pinned addresses and checked by SHA-256, Python libraries come from the hash-locked `build/requirements-lock.txt`):
 
 ```powershell
-winget install Gyan.FFmpeg.Shared JRSoftware.InnoSetup
 powershell -ExecutionPolicy Bypass -File build\build.ps1
 ```
+
+Releases are built by [GitHub Actions](.github/workflows/release.yml) from the tagged commit. [SECURITY.md](SECURITY.md) explains how to verify a download.
 
 Command line and tests:
 
@@ -108,10 +110,10 @@ python -m converter download "https://www.youtube.com/watch?v=..." --mode best
 python tests/smoke_test.py
 ```
 
-Code layout: `converter/` holds the engine (Pillow for images, FFmpeg for everything with a timeline), the yt-dlp downloader and the updater; `ui/` holds the interface (CustomTkinter) with its design tokens, components and animations.
+Code layout: `converter/` holds the engine (Pillow for images, FFmpeg for everything with a timeline), the yt-dlp downloader and the Spotify matcher; `ui/` holds the interface (CustomTkinter) with its design tokens, components and animations.
 
 </details>
 
 ## License
 
-MIT. FFmpeg (GPL), yt-dlp, Pillow and the other libraries keep their own licenses; the FFmpeg licence and source links ship in the app's `ffmpeg` folder.
+MIT. The bundled components keep their own licences; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). Privacy, network use and how to verify a download: [SECURITY.md](SECURITY.md).

@@ -100,6 +100,16 @@ def bind_tree(widget, sequence: str, func, add: str = "+") -> None:
         bind_tree(child, sequence, func, add)
 
 
+def icon_circle(parent, icon_name: str, size: int, icon_size: int, bg=T.ACCENT_SOFT, fg=T.ACCENT_TEXT) -> ctk.CTkFrame:
+    """An icon on a round background. (A rounded CTkLabel pads its sides and turns into an oval.)"""
+    circle = ctk.CTkFrame(parent, width=size, height=size, corner_radius=size // 2, fg_color=bg)
+    circle.grid_propagate(False)
+    label = ctk.CTkLabel(circle, text="", image=T.icon(icon_name, icon_size, fg), fg_color="transparent")
+    label.place(relx=0.5, rely=0.5, anchor="center")
+    circle.icon_label = label
+    return circle
+
+
 # ----------------------------------------------------------------------------- buttons
 
 
