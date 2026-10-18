@@ -14,8 +14,9 @@
 #   * All of FFmpeg's own decoders, encoders, formats, filters and protocols (nothing native is removed).
 #   * Exactly the external libraries Media Converter uses: x264, x265 (8 and 10 bit), SVT-AV1, libaom (AV1
 #     encoder), libvpx (VP8/VP9), libwebp, LAME (MP3), Opus, Vorbis, and dav1d for AV1 decoding.
-#   * Left out: hardware encoders, capture devices (libavdevice), ffplay, and the ~80 other optional libraries a
-#     full build bundles (subtitle rendering, OpenCL/Vulkan filters, rarely used codecs) that the app never calls.
+#   * Left out: hardware encoders, capture devices (only the "lavfi" test-pattern input, used by the self-test, is
+#     kept), ffplay, and the ~80 other optional libraries a full build bundles (subtitle rendering, OpenCL/Vulkan
+#     filters, rarely used codecs) that the app never calls.
 #   * ffprobe is a second, decode-only build, so it doesn't carry a copy of every encoder.
 #   * Third-party libraries are linked statically: two self-contained programs, no DLLs or dylibs to manage.
 set -euo pipefail
@@ -202,7 +203,8 @@ build_libs() {
 ffmpeg_configure() {  # ffmpeg_configure <build dir> [extra options...]
   local dir="$1"; shift
   local common=(--prefix="$dir/install" --disable-autodetect --enable-gpl --enable-version3 --disable-debug --disable-doc
-                --disable-ffplay --disable-avdevice --enable-zlib --pkg-config-flags=--static
+                --disable-ffplay --disable-indevs --disable-outdevs --enable-indev=lavfi --enable-zlib
+                --pkg-config-flags=--static
                 --extra-cflags="-I$PREFIX/include" --extra-version="mediaconverter-mc$REV")
   if [[ $OS == windows ]]; then
     common+=(--enable-w32threads --enable-schannel --extra-ldflags="-L$PREFIX/lib -static -static-libgcc -static-libstdc++")
