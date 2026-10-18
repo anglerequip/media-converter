@@ -1,0 +1,5 @@
+Pillow>=11.3          # images, incl. native AVIF
+pillow-heif>=0.18     # HEIC / HEIF (iPhone photos)
+customtkinter>=5.2    # the window
+tkinterdnd2>=0.4      # drag and drop
+yt-dlp[default,curl-cffi]>=2026.8.19   # video links; curl-cffi is needed for TikTok
