@@ -95,6 +95,28 @@ def ffprobe() -> str:
     return path
 
 
+_KNOWN_ERRORS = [
+    ("moov atom not found", "This file is incomplete or damaged. It may not have finished downloading or copying."),
+    ("invalid data found when processing input", "This file is damaged, or it isn't really the type its extension says."),
+    ("no such file or directory", "The file could not be found. It may have been moved or deleted."),
+    ("permission denied", "Windows refused access to the file. Close any program using it, or choose another output folder."),
+    ("no space left on device", "The disk is full. Free up some space or choose another output folder."),
+    ("could not find tag for codec", "This combination of format and codec isn't possible. Try another output format."),
+    ("does not contain any stream", "This file contains no audio or video."),
+    ("end of file", "The file ends unexpectedly. It may be damaged or incomplete."),
+]
+
+
+def plain_error(stderr: str) -> str:
+    """Turn FFmpeg's console output into a sentence a person can act on, with the technical detail below it."""
+    text = "\n".join(line for line in stderr.strip().splitlines() if line.strip())
+    lower = text.lower()
+    for needle, message in _KNOWN_ERRORS:
+        if needle in lower:
+            return f"{message}\n\nTechnical detail: {text[-400:]}"
+    return text or "FFmpeg stopped without saying why."
+
+
 def probe(path: Path) -> dict:
     """Return FFprobe's JSON description of a media file."""
     result = subprocess.run(
@@ -107,7 +129,7 @@ def probe(path: Path) -> dict:
         creationflags=_NO_WINDOW,
     )
     if result.returncode != 0:
-        raise ConversionError(f"Could not read this file: {result.stderr.strip() or 'unknown format'}")
+        raise ConversionError(plain_error(result.stderr) if result.stderr.strip() else "This file could not be read.")
     return json.loads(result.stdout or "{}")
 
 
@@ -172,4 +194,4 @@ def run_ffmpeg(
     if proc.returncode != 0:
         output.unlink(missing_ok=True)
         detail = "\n".join(stderr_lines[-6:]) or f"FFmpeg exited with code {proc.returncode}"
-        raise ConversionError(detail)
+        raise ConversionError(plain_error(detail))

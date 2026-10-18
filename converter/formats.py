@@ -107,3 +107,35 @@ def targets_for(path: Path, kind: str | None = None) -> list[str]:
 
 def all_input_extensions() -> list[str]:
     return sorted(IMAGE_IN | VIDEO_IN | AUDIO_IN)
+
+
+# ----------------------------------------------------------------------------- grouping for the UI
+
+GROUP_ORDER = ["Images", "Animation", "Video", "Audio"]
+_VIDEO_CONTAINERS = {"mp4", "mkv", "mov", "webm", "avi"}
+
+
+def group_of(target: str, moving_sources: bool) -> str:
+    """Which heading a target belongs under. GIF and WebP count as Animation when the sources
+    move (video or animated images) and as Images otherwise."""
+    if target in AUDIO_OUT:
+        return "Audio"
+    if target in _VIDEO_CONTAINERS:
+        return "Video"
+    if target == "apng" or (target in ("gif", "webp") and moving_sources):
+        return "Animation"
+    return "Images"
+
+
+def recommended_for(kind: str | None, src_ext: str = "") -> list[str]:
+    """Sensible first choices for a file, best first."""
+    src = normalise_ext(src_ext)
+    if kind == "image":
+        return {"heic": ["jpg", "png"], "png": ["jpg", "webp"], "jpg": ["png", "webp"]}.get(src, ["png", "jpg"])
+    if kind == "animation":
+        return ["mp4", "gif"] if src != "gif" else ["mp4", "webp"]
+    if kind == "video":
+        return ["mp4", "mp3"] if src != "mp4" else ["gif", "mp3"]
+    if kind == "audio":
+        return ["mp3", "flac"] if src != "mp3" else ["wav", "m4a"]
+    return []

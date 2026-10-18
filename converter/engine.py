@@ -47,15 +47,20 @@ class Options:
     video_codec: str = "h264"
     keep_streams: bool = True  # copy audio/video streams untouched when the target allows it
     out_dir: Path | None = None  # None = next to the source file
+    subfolder: str | None = None  # e.g. "Converted": a folder created next to each source file
     background: tuple[int, int, int] = (255, 255, 255)  # used where transparency is not supported
+    max_width: int | None = None  # shrink wider images/videos to this width; None keeps the original size
+    fps: float | None = None  # cap the frame rate; None keeps the original
 
 
 def _noop(_f: float, _t: str) -> None:
     pass
 
 
-def output_path(src: Path, ext: str, out_dir: Path | None) -> Path:
+def output_path(src: Path, ext: str, out_dir: Path | None, subfolder: str | None = None) -> Path:
     folder = Path(out_dir) if out_dir else src.parent
+    if subfolder:
+        folder = folder / subfolder
     folder.mkdir(parents=True, exist_ok=True)
     candidate = folder / f"{src.stem}.{ext}"
     n = 1
@@ -85,7 +90,7 @@ def convert(
     if target not in targets_for(src, kind):
         raise ConversionError(f"A {src.suffix} file cannot be converted to {target.upper()}.")
 
-    out = output_path(src, target, opts.out_dir)
+    out = output_path(src, target, opts.out_dir, opts.subfolder)
     progress(0.0, "Starting")
     try:
         if kind == "image" or (kind == "animation" and target not in ANIMATION_OUT):
@@ -102,6 +107,10 @@ def convert(
             _video_to_animated_image(src, out, target, opts, progress, cancel)
         else:
             _video_to_video(src, out, target, opts, progress, cancel)
+        if cancel is not None and cancel.is_set():
+            raise Cancelled()
+        progress(0.999, "Checking result")
+        verify_output(out, target)
     except (Cancelled, ConversionError):
         out.unlink(missing_ok=True)
         raise
@@ -110,6 +119,83 @@ def convert(
         raise ConversionError(f"{type(exc).__name__}: {exc}") from exc
     progress(1.0, "Done")
     return out
+
+
+def verify_output(path: Path, target: str) -> None:
+    """Open the finished file to make sure it is real and readable before reporting success."""
+    if not path.is_file() or path.stat().st_size == 0:
+        raise ConversionError("The converter finished but no output file was written.")
+    try:
+        if target == "pdf":
+            with path.open("rb") as fh:
+                if fh.read(5) != b"%PDF-":
+                    raise ValueError("not a PDF")
+            return
+        if target in STILL_OUT or target in ("apng", "webp", "gif"):
+            with Image.open(path) as im:
+                im.verify()
+            return
+        info = probe(path)
+        wanted = "audio" if target in AUDIO_OUT else "video"
+        if not any(s.get("codec_type") == wanted for s in info.get("streams", [])):
+            raise ValueError(f"no {wanted} stream")
+    except (ConversionError, ValueError, OSError, SyntaxError) as exc:
+        path.unlink(missing_ok=True)
+        raise ConversionError(f"The output file failed verification ({exc}) and was removed.") from exc
+
+
+def describe_settings(target: str, quality: str, codec: str = "h264") -> str:
+    """One short line of technical detail for the settings panel, e.g. 'H.264 · CRF 14 · AAC 320 kbps'."""
+    target = normalise_ext(target)
+    q = quality
+    if target == "jpg":
+        return {"lossless": "JPEG quality 100 · full colour", "max": "JPEG quality 100 · full colour",
+                "high": "JPEG quality 95 · full colour", "balanced": "JPEG quality 88", "small": "JPEG quality 75"}[q]
+    if target == "webp":
+        return "Lossless WebP" if q in ("lossless", "max") else f"WebP quality {({'high': 95, 'balanced': 85, 'small': 75})[q]}"
+    if target in ("png", "tiff", "bmp", "tga", "apng", "ico"):
+        return "Lossless format: quality doesn't change the picture"
+    if target == "avif":
+        return f"AVIF quality {({'lossless': 100, 'max': 100, 'high': 90, 'balanced': 75, 'small': 60})[q]}"
+    if target == "heic":
+        return "Lossless HEIC" if q == "lossless" else f"HEIC quality {({'max': 100, 'high': 92, 'balanced': 80, 'small': 65})[q]}"
+    if target == "gif":
+        return {"lossless": "Own 256-colour palette per frame", "max": "Own 256-colour palette per frame",
+                "high": "One optimised palette · smooth dithering", "balanced": "Shared palette · smaller file",
+                "small": "Shared palette · ordered dithering"}[q]
+    if target == "pdf":
+        return "Image embedded at full resolution"
+    if target in AUDIO_OUT:
+        return {
+            "mp3": {"lossless": "320 kbps", "max": "320 kbps", "high": "VBR V0 (~245 kbps)", "balanced": "VBR V2 (~190 kbps)", "small": "VBR V5 (~130 kbps)"}[q],
+            "m4a": {"lossless": "Apple Lossless (ALAC)", "max": "AAC 320 kbps", "high": "AAC 256 kbps", "balanced": "AAC 192 kbps", "small": "AAC 128 kbps"}[q],
+            "aac": {"lossless": "AAC 320 kbps", "max": "AAC 320 kbps", "high": "AAC 256 kbps", "balanced": "AAC 192 kbps", "small": "AAC 128 kbps"}[q],
+            "ogg": f"Vorbis q{({'lossless': 10, 'max': 10, 'high': 8, 'balanced': 6, 'small': 4})[q]}",
+            "opus": f"Opus {({'lossless': 256, 'max': 256, 'high': 192, 'balanced': 128, 'small': 96})[q]} kbps",
+            "flac": "Lossless at every setting",
+            "wav": "Uncompressed PCM at every setting",
+            "aiff": "Uncompressed PCM at every setting",
+            "wma": f"WMA {({'lossless': 192, 'max': 192, 'high': 192, 'balanced': 160, 'small': 128})[q]} kbps",
+        }[target]
+    if target in ("mp4", "mkv", "mov", "webm", "avi"):
+        c = _pick_codec(target, codec)
+        names = {"h264": "H.264", "h265": "H.265", "av1": "AV1", "vp9": "VP9", "mpeg4": "MPEG-4"}
+        if q == "lossless":
+            return f"{names[c]} lossless"
+        if c == "mpeg4":
+            return f"MPEG-4 q{({'max': 2, 'high': 3, 'balanced': 5, 'small': 8})[q]} · MP3 audio"
+        if target == "webm":
+            audio = f"Opus {({'max': 256, 'high': 192, 'balanced': 128, 'small': 96})[q]} kbps"
+        else:
+            audio = f"AAC {({'max': 320, 'high': 256, 'balanced': 192, 'small': 128})[q]} kbps"
+        return f"{names[c]} · CRF {_CRF[c][q]} · {audio}"
+    return ""
+
+
+def _scale_filter(max_width: int | None, even: bool) -> str | None:
+    if not max_width:
+        return None
+    return f"scale='min({max_width},iw)':{'-2' if even else '-1'}:flags=lanczos"
 
 
 # --------------------------------------------------------------------------- still images
@@ -180,6 +266,8 @@ def _image_to_image(src: Path, out: Path, target: str, opts: Options) -> None:
         exif_obj = img.getexif()
         exif = exif_obj.tobytes() if len(exif_obj) else None
         img, icc = _prepare(img, target, opts.background)
+        if opts.max_width and img.width > opts.max_width:
+            img = img.resize((opts.max_width, max(1, round(img.height * opts.max_width / img.width))), Image.LANCZOS)
 
     if target == "jpg":
         quality, sub = {"lossless": (100, 0), "max": (100, 0), "high": (95, 0), "balanced": (88, 2), "small": (75, 2)}[q]
@@ -242,7 +330,10 @@ def _animation_with_pillow(src: Path, out: Path, target: str, opts: Options, can
         for frame in ImageSequence.Iterator(im):
             if cancel is not None and cancel.is_set():
                 raise Cancelled()
-            frames.append(frame.convert("RGBA"))
+            rgba = frame.convert("RGBA")
+            if opts.max_width and rgba.width > opts.max_width:
+                rgba = rgba.resize((opts.max_width, max(1, round(rgba.height * opts.max_width / rgba.width))), Image.LANCZOS)
+            frames.append(rgba)
             durations.append(_frame_duration(frame, fallback))
     first, rest = frames[0], frames[1:]
     q = opts.quality
@@ -296,7 +387,7 @@ def _animation_with_ffmpeg(
         if target == "gif":
             # The GIF muxer takes each frame's delay from the "duration" lines, including the last one.
             listing.write_text("\n".join(entries), encoding="utf-8")
-            vf = _gif_filtergraph(None, None, opts.quality, has_alpha)
+            vf = _gif_filtergraph(None, opts.max_width, opts.quality, has_alpha)
             args = ["-f", "concat", "-safe", "0", "-i", str(listing), "-filter_complex", vf, "-loop", "0"]
             run_ffmpeg([*args, str(out)], out, total, stage, cancel)
             _set_last_gif_delay(out, durations[-1])
@@ -314,7 +405,8 @@ def _animation_with_ffmpeg(
         for d in durations:
             step = math.gcd(step, d)
         fps = f"1000/{step}" if 1000 / step <= 60 else "60"
-        filters = [f"fps={fps}", "crop=trunc(iw/2)*2:trunc(ih/2)*2"]
+        filters = [f"fps={fps}", _scale_filter(opts.max_width, True), "crop=trunc(iw/2)*2:trunc(ih/2)*2"]
+        filters = [f for f in filters if f]
         codec = _pick_codec(target, opts.video_codec)
         args = [*input_args, "-vf", ",".join(filters), *_video_encoder(codec, opts.quality, target, None, has_alpha and keeps_alpha), "-an"]
         if target in ("mp4", "mov"):
@@ -482,8 +574,12 @@ def _video_to_video(src: Path, out: Path, target: str, opts: Options, progress: 
     args += ["-map_metadata", "0", "-sn", "-dn"]
 
     allowed_v = _CONTAINER_VIDEO[target]
+    resizing = bool(opts.max_width and int(v.get("width") or 0) > opts.max_width)
+    refps = bool(opts.fps and _fps(v) > opts.fps + 0.01)
     copy_video = (
         opts.keep_streams
+        and not resizing
+        and not refps
         and not same_container
         and v.get("codec_name") == _FFPROBE_NAME[codec]
         and (allowed_v is None or v.get("codec_name") in allowed_v)
@@ -493,7 +589,9 @@ def _video_to_video(src: Path, out: Path, target: str, opts: Options, progress: 
         if v.get("codec_name") == "hevc" and target in ("mp4", "mov"):
             args += ["-tag:v", "hvc1"]
     else:
-        args += ["-vf", "crop=trunc(iw/2)*2:trunc(ih/2)*2", *_video_encoder(codec, opts.quality, target, v.get("pix_fmt"))]
+        filters = [f"fps={opts.fps:g}" if refps else None, _scale_filter(opts.max_width, True) if resizing else None,
+                   "crop=trunc(iw/2)*2:trunc(ih/2)*2"]
+        args += ["-vf", ",".join(f for f in filters if f), *_video_encoder(codec, opts.quality, target, v.get("pix_fmt"))]
 
     if audios:
         allowed_a = _CONTAINER_AUDIO[target]
@@ -532,11 +630,10 @@ def _video_to_gif(src: Path, out: Path, opts: Options, progress: ProgressFn, can
     videos = _streams(info, "video")
     if not videos:
         raise ConversionError("This file contains no video track.")
-    q = opts.quality
-    fps_cap = {"lossless": 50, "max": 50, "high": 25, "balanced": 20, "small": 12}[q]
-    width = {"lossless": None, "max": None, "high": None, "balanced": 720, "small": 480}[q]
-    fps = min(_fps(videos[0]), fps_cap)
-    graph = _gif_filtergraph(fps, width, q, alpha=False)
+    # Keep the original size and frame rate unless the user caps them. GIF delays are counted
+    # in 1/100 s, so 50 fps is the most a GIF can show.
+    fps = min(_fps(videos[0]), opts.fps or 50, 50)
+    graph = _gif_filtergraph(fps, opts.max_width, opts.quality, alpha=False)
     run_ffmpeg(["-i", str(src), "-filter_complex", graph, "-loop", "0", str(out)], out, duration_of(info), progress, cancel)
 
 
@@ -546,11 +643,9 @@ def _video_to_animated_image(src: Path, out: Path, target: str, opts: Options, p
     if not videos:
         raise ConversionError("This file contains no video track.")
     q = opts.quality
-    fps_cap = {"lossless": 60, "max": 60, "high": 30, "balanced": 20, "small": 15}[q]
-    width = {"lossless": None, "max": None, "high": None, "balanced": 720, "small": 480}[q]
-    filters = [f"fps={min(_fps(videos[0]), fps_cap):g}"]
-    if width:
-        filters.append(f"scale='min({width},iw)':-2:flags=lanczos")
+    filters = [f"fps={min(_fps(videos[0]), opts.fps or 60, 60):g}"]
+    if opts.max_width:
+        filters.append(_scale_filter(opts.max_width, True))
     args = ["-i", str(src), "-map", f"0:{videos[0]['index']}", "-vf", ",".join(filters), "-an"]
     if target == "webp":
         quality = {"lossless": "100", "max": "95", "high": "90", "balanced": "80", "small": "70"}[q]
