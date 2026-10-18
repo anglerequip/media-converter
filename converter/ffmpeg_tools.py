@@ -57,12 +57,29 @@ def _candidate_dirs() -> list[str]:
     return dirs
 
 
+FROZEN = bool(getattr(sys, "frozen", False))  # running as the packaged MediaConverter.exe
+
+
+def _bundled_dirs() -> list[str]:
+    """In the packaged app, FFmpeg ships in an "ffmpeg" folder next to the program."""
+    if not FROZEN:
+        return []
+    base = Path(sys.executable).resolve().parent
+    internal = Path(getattr(sys, "_MEIPASS", base))
+    return [str(base / "ffmpeg"), str(internal / "ffmpeg")]
+
+
 @lru_cache(maxsize=None)
 def find_tool(name: str) -> str | None:
+    exe = name + (".exe" if sys.platform == "win32" else "")
+    # The packaged app uses its own tested FFmpeg first, whatever else is installed.
+    for d in _bundled_dirs():
+        path = os.path.join(d, exe)
+        if os.path.isfile(path):
+            return path
     found = shutil.which(name)
     if found:
         return found
-    exe = name + (".exe" if sys.platform == "win32" else "")
     for d in _candidate_dirs():
         path = os.path.join(d, exe)
         if os.path.isfile(path):

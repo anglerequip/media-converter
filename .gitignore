@@ -2,10 +2,11 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
-build/
-dist/
-*.spec
 tools/bin/
 tools/*.exe
 .vscode/
 .idea/
+.venv-build/
+build/work/
+build/version_info.txt
+dist/

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="286" height="56" viewBox="0 0 286 56" role="img" aria-label="Download for Windows">
+  <title>Download for Windows</title>
+  <rect x="0.5" y="0.5" width="285" height="55" rx="12" fill="#3987D7" stroke="#2E75BF"/>
+  <g fill="#FFFFFF" transform="translate(26 17)">
+    <rect x="0" y="0" width="10" height="10" rx="1"/>
+    <rect x="12" y="0" width="10" height="10" rx="1"/>
+    <rect x="0" y="12" width="10" height="10" rx="1"/>
+    <rect x="12" y="12" width="10" height="10" rx="1"/>
+  </g>
+  <text x="64" y="35" fill="#FFFFFF" font-family="Segoe UI Semibold, Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif"
+        font-size="19" font-weight="600">Download for Windows</text>
+</svg>

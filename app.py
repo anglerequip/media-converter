@@ -369,7 +369,7 @@ class App(ctk.CTk):
             version = yt_dlp.version.__version__
         except Exception:
             version = "not installed"
-        note(c, f"yt-dlp {version}. Sites change often; if downloads from one start failing, update it here.")
+        yt_note = note(c, f"yt-dlp {version}. Sites change often; if downloads from one start failing, update it here.")
         status = note(c, "", row=3)
         btn = ctk.CTkButton(c, text="Update now", width=120, height=32, corner_radius=T.RADIUS_SMALL, fg_color=T.ACCENT,
                             hover_color=T.ACCENT_HOVER, font=T.font(12, "semibold"),
@@ -408,6 +408,10 @@ class App(ctk.CTk):
             wait()
 
         btn.configure(command=update)
+        if updater.FROZEN:  # the packaged app can't pip-install; yt-dlp arrives with each app update instead
+            btn.grid_remove()
+            yt_note.configure(text=f"yt-dlp {version}. It is updated together with Media Converter: if downloads "
+                                   "from a site start failing, use Check for updates below.")
 
         c = card(2, "FFmpeg")
         ff = find_tool("ffmpeg")
@@ -489,9 +493,14 @@ class App(ctk.CTk):
                 return finished()
             say(f"Version {remote} is available.", "info")
             changes = "".join(f"\n  •  {n}" for n in notes[:4])
+            if updater.FROZEN and updater.is_installed_copy():
+                action = "Download and install it now? Media Converter will close, update itself and open again."
+            elif updater.FROZEN:
+                action = "Open the download page now?"
+            else:
+                action = "Download and install it now?"
             question = (f"Version {remote} of Media Converter is available. You have version {__version__}."
-                        + (f"\n\nRecent changes:{changes}" if changes else "")
-                        + "\n\nDownload and install it now?")
+                        + (f"\n\nRecent changes:{changes}" if changes else "") + f"\n\n{action}")
             if not messagebox.askyesno("Update available", question, parent=parent):
                 say("Update skipped. You can update any time from here.", "info")
                 return finished()
@@ -519,26 +528,25 @@ class App(ctk.CTk):
             if not ok:
                 say(str(result) if isinstance(result, updater.UpdateError) else f"The update failed: {result}", "error")
                 return
+            if result == updater.INSTALLER_STARTED:  # the installer needs this window gone; it reopens the app
+                self._save_and_close()
+                return
+            if updater.FROZEN:  # portable copy: the download page was opened instead
+                say("The download page is open in your browser.", "info")
+                messagebox.showinfo("Update", result, parent=parent)
+                return
             say(f"Version {remote} is installed. Restart to start using it.", "success")
             if messagebox.askyesno("Update installed", f"{result}\n\nRestart Media Converter now to use version {remote}?",
                                    parent=parent):
-                if not getattr(self, "_skip_save", False):
-                    if self.state() == "normal":
-                        self.settings["geometry"] = self.geometry()
-                    save_settings(self.settings)
                 updater.restart()
-                self.details.shutdown()
-                self.destroy()
+                self._save_and_close()
 
         say("Checking for updates…", "info")
         background(updater.latest_version, checked)
 
     # ------------------------------------------------------------------ closing
 
-    def on_close(self) -> None:
-        if self.busy_count and not messagebox.askyesno(
-                "Still working", "A conversion or download is still running. Stop it and quit?", parent=self):
-            return
+    def _save_and_close(self) -> None:
         self.convert_view.cancel_event.set()
         self.download_view.cancel_event.set()
         if not getattr(self, "_skip_save", False):
@@ -548,8 +556,38 @@ class App(ctk.CTk):
         self.details.shutdown()
         self.destroy()
 
+    def on_close(self) -> None:
+        if self.busy_count and not messagebox.askyesno(
+                "Still working", "A conversion or download is still running. Stop it and quit?", parent=self):
+            return
+        self._save_and_close()
+
+
+def _log_file() -> Path:
+    return SETTINGS_FILE.parent / "log.txt"
+
+
+def _setup_logging() -> None:
+    """The packaged app has no console: send stray output and crash reports to a small log file."""
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        path = _log_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and path.stat().st_size > 512_000:
+            path.unlink()
+        log = open(path, "a", encoding="utf-8", buffering=1)
+    except OSError:
+        log = open(os.devnull, "w")
+    sys.stdout = sys.stderr = log
+
 
 def main() -> None:
+    _setup_logging()
+    if len(sys.argv) >= 3 and sys.argv[1] == "--self-test":  # MediaConverter.exe --self-test results.json [url ...]
+        from converter.selftest import run
+
+        raise SystemExit(run(sys.argv[2], sys.argv[3:]))
     if sys.platform == "win32":
         try:  # own taskbar group and icon instead of Python's
             import ctypes
@@ -558,6 +596,17 @@ def main() -> None:
         except Exception:
             pass
     app = App(sys.argv[1:])
+
+    def report(exc, value, tb) -> None:
+        import traceback
+
+        print("".join(traceback.format_exception(exc, value, tb)), file=sys.stderr)
+        try:
+            app.toast(f"Something went wrong ({exc.__name__}). Details were saved to {_log_file()}", "error", 8000)
+        except Exception:
+            pass
+
+    app.report_callback_exception = report
     app.mainloop()
 
 
