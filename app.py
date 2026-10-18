@@ -19,7 +19,7 @@ except ImportError:  # drag and drop is optional; the buttons always work
     TkinterDnD = None
 
 from converter import __version__
-from converter.ffmpeg_tools import find_tool
+from converter.ffmpeg_tools import find_tool, install_hint
 from ui import motion as M
 from ui import theme as T
 from ui.convert_view import ConvertView
@@ -172,7 +172,7 @@ class App(ctk.CTk):
         right.grid(row=0, column=4, sticky="e")
         self.theme_switch = Segmented(
             right,
-            [("System", "", "Follow Windows", "pc"), ("Light", "", "Light theme", "sun"), ("Dark", "", "Dark theme", "moon")],
+            [("System", "", "Follow macOS" if sys.platform == "darwin" else "Follow Windows", "pc"), ("Light", "", "Light theme", "sun"), ("Dark", "", "Dark theme", "moon")],
             command=self.set_theme, value=self.settings.get("appearance", "System"), height=34, equal=True,
         )
         self.theme_switch.grid(row=0, column=0, padx=(0, 8))
@@ -416,8 +416,7 @@ class App(ctk.CTk):
             path_lbl = note(c, fit_text(ff, T.font(11), 380), T.FAINT, row=2)
             Tooltip(path_lbl, ff)
         else:
-            note(c, "Not found. Install it by running this in a terminal, then restart the app:", T.ERROR)
-            note(c, "winget install Gyan.FFmpeg", T.TEXT, row=2)
+            note(c, f"Not found. {install_hint()}", T.ERROR)
 
         c = card(3, "About")
         note(c, f"Media Converter {__version__}. Works offline: files are converted on this computer and never "

@@ -349,6 +349,10 @@ class SpotifyFlow:
                     return
                 except ConversionError as exc:
                     failed.append(f"{label}: {exc}")
+                except OSError as exc:  # e.g. the download folder is on a drive that was unplugged
+                    failed.append(f"{label}: Couldn't save to {folder}: {exc.strerror or exc}")
+                except Exception as exc:  # never leave the screen stuck on "downloading"
+                    failed.append(f"{label}: {type(exc).__name__}: {exc}")
             put(("dl_done", saved, failed))
 
         threading.Thread(target=work, daemon=True).start()
@@ -399,9 +403,12 @@ class SpotifyFlow:
                         text = f"Stopped. {text}"
                     if failed:
                         text += f" {len(failed)} couldn't be downloaded."
-                    self.view.job_finished(text, T.SUCCESS if n and not failed else T.WARNING,
-                                           check=("warn", "Couldn't download: " + "; ".join(f.split(':')[0] for f in failed[:3]))
-                                           if failed else None)
+                    warning = None
+                    if failed:
+                        names = "; ".join(f.split(": ", 1)[0] for f in failed[:3])
+                        reason = failed[0].split(": ", 1)[-1]  # e.g. the folder isn't available
+                        warning = ("warn", f"Couldn't download: {names}. {reason}")
+                    self.view.job_finished(text, T.SUCCESS if n and not failed else T.WARNING, check=warning)
                     self.view.app.notify_done(n, len(failed))
         except queue.Empty:
             pass

@@ -11,13 +11,14 @@ import io
 import math
 import tempfile
 import threading
+import zlib
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 
 from PIL import Image, ImageCms, ImageOps, ImageSequence
 
-from .ffmpeg_tools import Cancelled, ConversionError, ProgressFn, duration_of, probe, run_ffmpeg
+from .ffmpeg_tools import Cancelled, ConversionError, ProgressFn, duration_of, find_tool, probe, run_ffmpeg
 from .formats import ANIMATION_OUT, AUDIO_OUT, STILL_OUT, kind_of, normalise_ext, targets_for
 
 try:
@@ -99,7 +100,7 @@ def convert(
     try:
         if kind == "image" or (kind == "animation" and target not in ANIMATION_OUT):
             _image_to_image(src, out, target, opts)
-        elif kind == "animation" and target in ("webp", "apng"):
+        elif kind == "animation" and target in ("webp", "apng") and not _too_big_for_memory(src):
             _animation_with_pillow(src, out, target, opts, cancel)
         elif kind == "animation":
             _animation_with_ffmpeg(src, out, target, opts, progress, cancel)
@@ -328,6 +329,18 @@ def _frame_duration(frame: Image.Image, fallback: int) -> int:
     return 100 if d <= 10 else int(d)
 
 
+# Pillow's animated WebP/APNG writers keep every frame in memory (4 bytes per pixel per frame). Above this, frames
+# go through a temporary folder and FFmpeg instead, so a long or deliberately crafted animation can't exhaust RAM.
+_PILLOW_ANIMATION_BUDGET = 600 * 1024 * 1024
+
+
+def _too_big_for_memory(src: Path) -> bool:
+    if not find_tool("ffmpeg"):
+        return False  # no alternative: let Pillow try
+    with Image.open(src) as im:
+        return getattr(im, "n_frames", 1) * im.width * im.height * 4 > _PILLOW_ANIMATION_BUDGET
+
+
 def _animation_with_pillow(src: Path, out: Path, target: str, opts: Options, cancel: threading.Event | None) -> None:
     """Animated input to animated WebP or APNG, frame-exact, with transparency."""
     frames: list[Image.Image] = []
@@ -363,8 +376,9 @@ def _animation_with_pillow(src: Path, out: Path, target: str, opts: Options, can
 def _animation_with_ffmpeg(
     src: Path, out: Path, target: str, opts: Options, progress: ProgressFn, cancel: threading.Event | None
 ) -> None:
-    """Animated input to a video file or GIF. Frames go through a temp folder so long animations don't fill RAM."""
-    keeps_alpha = target in ("webm", "gif")
+    """Animated input to a video file, GIF, or (when too large for Pillow) WebP/APNG. Frames go through a temp
+    folder so long animations don't fill RAM."""
+    keeps_alpha = target in ("webm", "gif", "webp", "apng")
     with tempfile.TemporaryDirectory(prefix="mediaconv_") as tmp_name:
         tmp = Path(tmp_name)
         entries: list[str] = []
@@ -399,6 +413,23 @@ def _animation_with_ffmpeg(
             args = ["-f", "concat", "-safe", "0", "-i", str(listing), "-filter_complex", vf, "-loop", "0"]
             run_ffmpeg([*args, str(out)], out, total, stage, cancel)
             _set_last_gif_delay(out, durations[-1])
+            return
+
+        if target in ("webp", "apng"):
+            # Same timing as the GIF case: every frame keeps its own delay ("-fps_mode passthrough" adds no frames).
+            listing.write_text("\n".join(entries), encoding="utf-8")
+            args = ["-f", "concat", "-safe", "0", "-i", str(listing), "-fps_mode", "passthrough"]
+            if opts.max_width:
+                args += ["-vf", _scale_filter(opts.max_width, False)]
+            if target == "webp":
+                lossless = opts.quality in ("lossless", "max")
+                quality = "100" if lossless else {"high": "95", "balanced": "85", "small": "75"}[opts.quality]
+                args += ["-c:v", "libwebp_anim", "-lossless", "1" if lossless else "0", "-q:v", quality,
+                         "-compression_level", "4", "-loop", "0"]
+            else:
+                args += ["-c:v", "apng", "-plays", "0", "-f", "apng"]
+            run_ffmpeg([*args, str(out)], out, total, stage, cancel)
+            _set_last_frame_delay(out, target, durations[-1])
             return
 
         # Video encoders need the last frame repeated for its duration to count; "-t" then trims the
@@ -454,6 +485,33 @@ def _set_last_gif_delay(path: Path, delay_ms: int) -> None:
         data[last_gce + 4] = centis & 0xFF
         data[last_gce + 5] = (centis >> 8) & 0xFF
         path.write_bytes(data)
+
+
+def _set_last_frame_delay(path: Path, target: str, delay_ms: int) -> None:
+    """Like _set_last_gif_delay, for animated WebP (last ANMF chunk) and APNG (last fcTL chunk)."""
+    data = bytearray(path.read_bytes())
+    if target == "webp":
+        pos, last = 12, None  # after "RIFF" <size> "WEBP"
+        while pos + 8 <= len(data):
+            size = int.from_bytes(data[pos + 4:pos + 8], "little")
+            if data[pos:pos + 4] == b"ANMF":
+                last = pos + 8
+            pos += 8 + size + (size & 1)
+        if last is not None:
+            data[last + 12:last + 15] = min(delay_ms, 0xFFFFFF).to_bytes(3, "little")
+            path.write_bytes(data)
+    else:
+        pos, last = 8, None  # after the PNG signature
+        while pos + 8 <= len(data):
+            size = int.from_bytes(data[pos:pos + 4], "big")
+            if data[pos + 4:pos + 8] == b"fcTL":
+                last = pos
+            pos += 12 + size
+        if last is not None:
+            body = last + 8
+            data[body + 20:body + 24] = min(delay_ms, 0xFFFF).to_bytes(2, "big") + (1000).to_bytes(2, "big")
+            data[body + 26:body + 30] = zlib.crc32(bytes(data[last + 4:body + 26])).to_bytes(4, "big")
+            path.write_bytes(data)
 
 
 # --------------------------------------------------------------------------- video

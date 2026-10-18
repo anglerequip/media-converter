@@ -72,9 +72,24 @@ def is_animated_image(path: Path) -> bool:
         return False
 
 
+def _is_mpeg_ts(path: Path) -> bool:
+    """.ts is also TypeScript source code. A real MPEG transport stream repeats a 0x47 sync byte every 188 bytes
+    (or every 192, after a 4-byte timestamp, in camera and Blu-ray recordings)."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(197)
+    except OSError:
+        return False
+    plain = len(head) >= 189 and head[0] == 0x47 and head[188] == 0x47
+    timestamped = len(head) >= 197 and head[4] == 0x47 and head[196] == 0x47
+    return plain or timestamped
+
+
 def kind_of(path: Path) -> str | None:
     """Classify a file as 'image', 'animation', 'video', 'audio' or None (unsupported)."""
     ext = path.suffix.lower().lstrip(".")
+    if ext == "ts" and not _is_mpeg_ts(path):
+        return None
     if ext in MAYBE_ANIMATED and is_animated_image(path):
         return "animation"
     if ext in IMAGE_IN:

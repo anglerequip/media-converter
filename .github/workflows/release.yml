@@ -36,9 +36,11 @@ jobs:
       - name: Check the tag matches the app's version number
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}  # passed as data, never pasted into the script
         run: |
           $v = python -c "from converter import __version__; print(__version__)"
-          if ("v$v" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} does not match converter/__init__.py version $v" }
+          if ("v$v" -ne $env:TAG) { throw "Tag $env:TAG does not match converter/__init__.py version $v" }
 
       - name: Build (build/build.ps1)
         shell: powershell

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import queue
+import sys
 import threading
 from pathlib import Path
 from tkinter import filedialog
@@ -37,7 +38,8 @@ SPOTIFY_NOTE = ("Spotify's own audio is copy-protected, so each song is found on
                 "it for older devices.")
 MODE_TEXT = {
     "best": "The highest resolution and quality the site offers, saved as MP4. On YouTube this is often AV1 or VP9 "
-            "video, which Windows 11 plays.",
+            + ("video, which QuickTime on many Macs can't play; choose Plays everywhere if a file won't open."
+               if sys.platform == "darwin" else "video, which Windows 11 plays."),
     "compatible": "MP4 with H.264 video and AAC audio, which plays on every phone, TV and editor. "
                   "Sometimes a little lower resolution than Best.",
     "mp3": "Audio only, as MP3 at 320 kbps.",

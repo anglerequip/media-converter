@@ -97,21 +97,28 @@ def find_tool(name: str) -> str | None:
     return None
 
 
+def install_hint() -> str:
+    """How to get FFmpeg on this computer, in one sentence."""
+    if FROZEN:
+        return "It ships with Media Converter, so this copy is incomplete: download and install it again from the project page."
+    if sys.platform == "win32":
+        return "Install it by running  winget install Gyan.FFmpeg  in a terminal, then restart the app."
+    if sys.platform == "darwin":
+        return "Install it by running  brew install ffmpeg  in Terminal, then restart the app."
+    return "Install the ffmpeg package with your system's package manager, then restart the app."
+
+
 def ffmpeg() -> str:
     path = find_tool("ffmpeg")
     if not path:
-        raise ConversionError(
-            "FFmpeg was not found. Install it with:  winget install Gyan.FFmpeg  and restart the app."
-        )
+        raise ConversionError(f"FFmpeg was not found. {install_hint()}")
     return path
 
 
 def ffprobe() -> str:
     path = find_tool("ffprobe")
     if not path:
-        raise ConversionError(
-            "FFprobe was not found. Install FFmpeg with:  winget install Gyan.FFmpeg  and restart the app."
-        )
+        raise ConversionError(f"FFprobe (part of FFmpeg) was not found. {install_hint()}")
     return path
 
 
@@ -119,7 +126,7 @@ _KNOWN_ERRORS = [
     ("moov atom not found", "This file is incomplete or damaged. It may not have finished downloading or copying."),
     ("invalid data found when processing input", "This file is damaged, or it isn't really the type its extension says."),
     ("no such file or directory", "The file could not be found. It may have been moved or deleted."),
-    ("permission denied", "Windows refused access to the file. Close any program using it, or choose another output folder."),
+    ("permission denied", "Access to the file was refused. Close any program using it, or choose another output folder."),
     ("no space left on device", "The disk is full. Free up some space or choose another output folder."),
     ("could not find tag for codec", "This combination of format and codec isn't possible. Try another output format."),
     ("does not contain any stream", "This file contains no audio or video."),
