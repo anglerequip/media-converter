@@ -70,8 +70,7 @@ class App(ctk.CTk):
                 pass
 
         self.title("Media Converter")
-        self.geometry(self.settings.get("geometry", "1180x800"))
-        self.minsize(1000, 700)
+        self._fit_to_screen(self.settings.get("geometry", "1180x800"))
         icon = APP_DIR / "assets" / "icon.ico"
         if icon.exists():
             try:
@@ -94,9 +93,10 @@ class App(ctk.CTk):
         body = ctk.CTkFrame(self, fg_color=T.BG)
         body.grid(row=1, column=0, sticky="nsew", padx=20, pady=(4, 20))
         self.current_view: str | None = None
+        self._body = body
         self.convert_view = ConvertView(body, self)
-        self.download_view = DownloadView(body, self)
-        self.views = {"convert": self.convert_view, "download": self.download_view}
+        self._download_view: DownloadView | None = None  # built the first time it's opened (saves ~0.2 s at launch)
+        self.views = {"convert": self.convert_view}
         self.show_view(self.settings.get("view", "convert"))
 
         self._build_toast()
@@ -122,6 +122,23 @@ class App(ctk.CTk):
                 pass
         for child in widget.winfo_children():
             self.refresh_icons(child)
+
+    def _fit_to_screen(self, geometry: str) -> None:
+        """Open at the remembered (or default) size, but never larger than the screen or off its edges."""
+        import re
+
+        m = re.match(r"(\d+)x(\d+)(?:\+(-?\d+)\+(-?\d+))?", geometry or "")
+        w, h = (int(m.group(1)), int(m.group(2))) if m else (1180, 800)
+        scale = self._get_window_scaling() if hasattr(self, "_get_window_scaling") else 1.0
+        screen_w = self.winfo_screenwidth() / scale  # CTk sizes windows in unscaled units
+        screen_h = self.winfo_screenheight() / scale
+        w, h = int(min(w, screen_w - 40)), int(min(h, screen_h - 90))  # room for the taskbar, Dock or menu bar
+        self.minsize(min(1000, w), min(700, h))
+        x = int(m.group(3)) if m and m.group(3) else None
+        y = int(m.group(4)) if m and m.group(4) else None
+        if x is None or y is None or not (0 <= x <= screen_w - 100 and 0 <= y <= screen_h - 100):
+            x, y = int((screen_w - w) / 2), int(max(20, (screen_h - h) / 3))
+        self.geometry(f"{w}x{h}+{x}+{y}")
 
     # ------------------------------------------------------------------ header
 
@@ -166,9 +183,18 @@ class App(ctk.CTk):
         gear.grid(row=0, column=1)
         Tooltip(gear, "Settings")
 
+    @property
+    def download_view(self) -> DownloadView:
+        if self._download_view is None:
+            self._download_view = DownloadView(self._body, self)
+            self.views["download"] = self._download_view
+        return self._download_view
+
     def show_view(self, name: str) -> None:
         if name not in ("convert", "download"):
             name = "convert"
+        if name == "download":
+            self.download_view  # noqa: B018  (build it now if this is the first visit)
         previous, self.current_view = self.current_view, name
         for key, view in self.views.items():
             if key != name:
@@ -195,18 +221,20 @@ class App(ctk.CTk):
 
     # ------------------------------------------------------------------ drag and drop
 
-    def register_drop(self, widget) -> None:
-        if not self.dnd:
+    def register_drop(self, widget=None) -> None:
+        """Accept dropped files anywhere in the window. Only the window itself is registered: Windows and macOS
+        look up from the widget under the pointer to the first registered window, so registering every widget
+        (hundreds, about 6 ms each) only slowed startup and adding files, and made the drop zone flicker."""
+        if not self.dnd or getattr(self, "_drop_registered", False):
             return
         try:
-            widget.drop_target_register(DND_FILES)
-            widget.dnd_bind("<<DropEnter>>", self._drop_enter)
-            widget.dnd_bind("<<DropLeave>>", self._drop_leave)
-            widget.dnd_bind("<<Drop>>", self._drop)
+            self.drop_target_register(DND_FILES)
+            self.dnd_bind("<<DropEnter>>", self._drop_enter)
+            self.dnd_bind("<<DropLeave>>", self._drop_leave)
+            self.dnd_bind("<<Drop>>", self._drop)
+            self._drop_registered = True
         except Exception:
             pass
-        for child in widget.winfo_children():
-            self.register_drop(child)
 
     def _drop_enter(self, event):
         if self._leave_job:
@@ -305,7 +333,7 @@ class App(ctk.CTk):
         mod = "Command" if sys.platform == "darwin" else "Control"
         self.bind(f"<{mod}-o>", lambda _e: (self.show_view("convert"), self.convert_view.choose_files()))
         self.bind(f"<{mod}-Return>", lambda _e: self.convert_view.start() if self.tabs.get() == "convert" else self.download_view.start())
-        self.bind("<Escape>", lambda _e: (self.convert_view.cancel(), self.download_view.cancel()))
+        self.bind("<Escape>", lambda _e: (self.convert_view.cancel(), self._download_view and self._download_view.cancel()))
         self.bind(f"<{mod}-Key-1>", lambda _e: self.show_view("convert"))
         self.bind(f"<{mod}-Key-2>", lambda _e: self.show_view("download"))
 
@@ -412,7 +440,8 @@ class App(ctk.CTk):
 
     def _save_and_close(self) -> None:
         self.convert_view.cancel_event.set()
-        self.download_view.cancel_event.set()
+        if self._download_view is not None:
+            self._download_view.cancel_event.set()
         if not getattr(self, "_skip_save", False):
             if self.state() == "normal":
                 self.settings["geometry"] = self.geometry()

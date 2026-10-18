@@ -18,7 +18,7 @@ from converter.formats import (
 from . import motion as M
 from . import theme as T
 from .widgets import (
-    DashedPanel, FileCard, Segmented, icon_circle, SmoothProgress, Tooltip, chip, fit_text, ghost_button, human_size,
+    DashedPanel, FileItem, Segmented, VirtualFileList, icon_circle, thumb_tile, SmoothProgress, Tooltip, chip, fit_text, ghost_button, human_size,
     primary_button, secondary_button, set_primary_enabled, style_chip,
 )
 
@@ -177,7 +177,7 @@ class ConvertView(ctk.CTkFrame):
         super().__init__(parent, fg_color=T.BG)
         self.app = app
         self.s = app.settings
-        self.cards: list[FileCard] = []
+        self.cards: list[FileItem] = []  # the queue; VirtualFileList draws only the visible part
         self.target: str | None = None
         self.busy = False
         self.cancel_event = threading.Event()
@@ -227,9 +227,7 @@ class ConvertView(ctk.CTkFrame):
         self.queue_count = ctk.CTkLabel(self.queue_head, text="", font=T.font(12), text_color=T.MUTED)
         self.queue_count.grid(row=0, column=1, sticky="w")
 
-        self.list = ctk.CTkScrollableFrame(left, fg_color=T.BG, corner_radius=0,
-                                           scrollbar_button_color=T.BORDER_STRONG, scrollbar_button_hover_color=T.FAINT)
-        self.list.grid_columnconfigure(0, weight=1)
+        self.list = VirtualFileList(left, self.remove, self.app.reveal, self.show_error, self._request_details)
 
     def _build_settings(self) -> None:
         panel = ctk.CTkFrame(self, fg_color=T.SURFACE, corner_radius=T.RADIUS_LARGE, border_width=1, border_color=T.BORDER,
@@ -476,72 +474,56 @@ class ConvertView(ctk.CTkFrame):
             elif p.is_file():
                 files.append(p)
         known = {c.path.resolve() for c in self.cards}
-        new_cards: list[FileCard] = []
+        new_items: list[FileItem] = []
         for f in files:
-            if f.resolve() in known:
+            resolved = f.resolve()
+            if resolved in known:
                 continue
-            known.add(f.resolve())
-            card = FileCard(self.list, f, kind_of(f), self.remove, self.app.reveal, self.show_error)
-            self.cards.append(card)
-            self.app.register_drop(card)
-            if card.kind:
-                self.app.details.request(f, card.kind, card.set_details)
-            new_cards.append(card)
-        # Animate only small batches; a folder of hundreds of files should just appear.
-        animated = new_cards[:8] if M.enabled() and len(new_cards) <= 12 else []
-        targets = {}
-        for card in animated:
-            targets[card] = M.natural_height(card)
-            M.collapse_now(card)
-            card.configure(fg_color=T.ACCENT_SOFT, border_color=T.ACCENT)
-        if new_cards:
+            known.add(resolved)
+            try:
+                size = f.stat().st_size
+            except OSError:
+                continue
+            new_items.append(FileItem(f, kind_of(f), size_bytes=size))
+        # A short highlight for small batches; a folder of hundreds of files should simply appear.
+        if len(new_items) <= 12:
+            for item in new_items:
+                item.flash = True
+        self.cards.extend(new_items)
+        if new_items:
             self.hide_banner()
         self.layout_cards()
         self.refresh()
-        for i, card in enumerate(animated):
-            self.after(i * 45, lambda c=card: self._reveal_card(c, targets[c]))
-        return len(new_cards)
+        return len(new_items)
 
-    def _reveal_card(self, card: FileCard, height: int) -> None:
-        if not card.winfo_exists():
-            return
-        M.expand(card, height, duration=M.SLOW)
-        M.fade(card, 700, key="flash", fg_color=T.SURFACE, border_color=T.BORDER)
+    def _request_details(self, item: FileItem) -> None:
+        """Thumbnails and media details load in the background, only for files that come into view."""
+        self.app.details.request(item.path, item.kind, lambda thumb, details: self._details_ready(item, thumb, details))
 
-    def remove(self, card: FileCard) -> None:
-        if self.busy or card not in self.cards:
+    def _details_ready(self, item: FileItem, thumb, details: dict) -> None:
+        item.details = details
+        if thumb is not None:
+            item.tile = thumb_tile(thumb, item.kind)
+            self.list.remember_tile(item)
+        self.list.refresh_item(item)
+
+    def remove(self, item: FileItem) -> None:
+        if self.busy or item not in self.cards:
             return
-        self.cards.remove(card)
+        self.list.remove(item)  # the list shares self.cards, so this removes it from the queue too
         self.refresh()
-
-        def gone() -> None:
-            card.destroy()
+        self._update_count()
+        if not self.cards:
             self.layout_cards()
-
-        if M.enabled():
-            M.collapse(card, done=gone)
-        else:
-            gone()
 
     def clear(self) -> None:
         if self.busy:
             return
-        leaving, self.cards = self.cards, []
+        self.cards = []
         self.hide_banner()
         self.total.jump(0)
+        self.layout_cards()
         self.refresh()
-
-        def gone() -> None:
-            for c in leaving:
-                c.destroy()
-            self.layout_cards()
-
-        if M.enabled() and 0 < len(leaving) <= 20:
-            for c in leaving:
-                M.collapse(c, duration=M.NORMAL)
-            self.after(M.NORMAL + 40, gone)
-        else:
-            gone()
 
     def convert_more(self) -> None:
         self.clear()
@@ -562,13 +544,15 @@ class ConvertView(ctk.CTkFrame):
             self.drop.grid(row=1, column=0, sticky="nsew")
             self.queue_head.grid_remove()
             self.list.grid_remove()
-        for i, c in enumerate(self.cards):
-            c.grid(row=i, column=0, sticky="ew", pady=(0, 8), padx=(0, 6))
+        self.list.set_items(self.cards)
+        self._update_count()
+
+    def _update_count(self) -> None:
         total = sum(c.size_bytes for c in self.cards)
         n = len(self.cards)
         self.queue_count.configure(text=f"{n} file{'s' if n != 1 else ''}  ·  {human_size(total)}" if n else "")
 
-    def show_error(self, card: FileCard) -> None:
+    def show_error(self, card: FileItem) -> None:
         messagebox.showerror("Conversion failed", f"{card.path.name}\n\n{card.error}", parent=self)
 
     # ================================================================== refresh (format choices + status)
@@ -651,7 +635,6 @@ class ConvertView(ctk.CTkFrame):
             if groups[g]:
                 heading(g.upper())
                 place(groups[g])
-        self.app.register_drop(self.chip_area)
 
     def select(self, target: str) -> None:
         if self.busy:
@@ -805,13 +788,9 @@ class ConvertView(ctk.CTkFrame):
         self.app.set_busy(True)
         self.cancel_event.clear()
         self.hide_banner()
-        for c in self.cards:
-            if c in todo:
-                c.output = None
-                c.error = ""
-                c.reset_action(self.remove)
-                c.set_state("waiting")
-            c.set_locked(True)
+        for c in todo:
+            c.output, c.out_size, c.error, c.detail, c.fraction, c.state = None, 0, "", "", None, "waiting"
+        self.list.set_locked(True)
         set_primary_enabled(self.convert_btn, False)
         self.clear_btn.grid_remove()
         self.open_btn.grid_remove()
@@ -827,7 +806,7 @@ class ConvertView(ctk.CTkFrame):
             self.cancel_btn.configure(state="disabled", text="Cancelling…", image=T.blank(15))
             self.status_detail.configure(text="Stopping safely. The unfinished file will be removed.")
 
-    def _worker(self, cards: list[FileCard], target: str, opts: Options) -> None:
+    def _worker(self, cards: list[FileItem], target: str, opts: Options) -> None:
         put = self.events.put
         total = len(cards)
         results = {"done": [], "failed": 0, "skipped": 0, "cancelled": False}
@@ -848,8 +827,8 @@ class ConvertView(ctk.CTkFrame):
             put(("total", i / total, i + 1, total, card.path.name, "Starting"))
             try:
                 out = convert(card.path, target, opts, progress, self.cancel_event)
-                card.output = out
-                results["done"].append((card.size_bytes, out.stat().st_size))
+                card.output, card.out_size = out, out.stat().st_size
+                results["done"].append((card.size_bytes, card.out_size))
                 put(("card", card, "done", None, ""))
                 put(("output", out))
             except Cancelled:
@@ -872,9 +851,9 @@ class ConvertView(ctk.CTkFrame):
                 ev = self.events.get_nowait()
                 kind = ev[0]
                 if kind == "card":
-                    _, card, state, fraction, detail = ev
-                    if card.winfo_exists():
-                        card.set_state(state, fraction, detail)
+                    _, item, state, fraction, detail = ev
+                    item.state, item.fraction, item.detail = state, fraction, detail
+                    self.list.refresh_item(item)
                 elif kind == "total":
                     _, fraction, n, total, name, text = ev
                     self.total.glide(fraction)
@@ -891,8 +870,7 @@ class ConvertView(ctk.CTkFrame):
     def _finish(self, results: dict, target: str) -> None:
         self.busy = False
         self.app.set_busy(False)
-        for c in self.cards:
-            c.set_locked(False)
+        self.list.set_locked(False)
         self.total.glide(1.0)
         self.after(600, self.total.grid_remove)
         done, failed, skipped, cancelled = results["done"], results["failed"], results["skipped"], results["cancelled"]

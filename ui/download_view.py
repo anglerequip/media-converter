@@ -85,7 +85,8 @@ class DownloadView(ctk.CTkFrame):
         self._build_main()
         self._build_history()
         self.spotify = SpotifyFlow(self)
-        threading.Thread(target=self._load_extractors, daemon=True).start()
+        # Load yt-dlp's site list once the window is on screen, so it doesn't compete with building it.
+        self.after(1200, lambda: threading.Thread(target=self._load_extractors, daemon=True).start())
         self.after(80, self._drain)
         self._validate()
 

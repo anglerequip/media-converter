@@ -5,7 +5,10 @@ from __future__ import annotations
 import io
 import queue
 import subprocess
+import sys
 import tkinter as tk
+from dataclasses import dataclass, field
+from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
@@ -337,7 +340,7 @@ class SmoothProgress(ctk.CTkProgressBar):
 
 
 def _dashed_box(w: int, h: int, radius: int, fill: str, line: str, line_w: float, dash: float, gap: float,
-                ss: int = 3) -> Image.Image:
+                ss: int = 2) -> Image.Image:
     """A rounded rectangle with a dashed outline, drawn at ss x size and scaled down for smooth edges."""
     W, H, R, LW = w * ss, h * ss, radius * ss, line_w * ss
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -445,7 +448,7 @@ KIND_TINT = {
 }
 
 
-TILE_PX, TILE_RADIUS = 132, 24  # drawn at 3x the 44 px display size
+TILE_PX, TILE_RADIUS = 96, 17  # drawn at about 2x the 44 px display size
 
 
 def _tile_base(colour: str) -> Image.Image:
@@ -454,14 +457,15 @@ def _tile_base(colour: str) -> Image.Image:
     return img
 
 
+@lru_cache(maxsize=None)
 def kind_tile(kind: str | None) -> ctk.CTkImage:
     """A tinted rounded square with the file-type icon, for files without a preview."""
     bg, fg = KIND_TINT[kind]
     out = []
     for mode in (0, 1):
         tile = _tile_base(bg[mode])
-        glyph = T._render_glyph(T._icon_source()[1][KIND_ICON[kind]], 60, fg[mode])
-        tile.alpha_composite(glyph, ((TILE_PX - 60) // 2, (TILE_PX - 60) // 2))
+        glyph = T._render_glyph(T._icon_source()[1][KIND_ICON[kind]], 44, fg[mode])
+        tile.alpha_composite(glyph, ((TILE_PX - 44) // 2, (TILE_PX - 44) // 2))
         out.append(tile)
     return ctk.CTkImage(light_image=out[0], dark_image=out[1], size=(44, 44))
 
@@ -575,7 +579,11 @@ class DetailsLoader:
         self.pool.shutdown(wait=False, cancel_futures=True)
 
 
-# ----------------------------------------------------------------------------- file card
+# ----------------------------------------------------------------------------- file list (virtualised)
+#
+# Each file is a FileItem (plain data). The list shows them with a small pool of FileRow widgets, only as many as
+# fit on screen plus two, and re-binds those rows to whichever items are in view as you scroll. Adding 500 files
+# therefore creates no extra widgets, and scrolling moves a dozen rows instead of re-laying out hundreds.
 
 
 STATUS_STYLE = {
@@ -592,51 +600,29 @@ STATUS_STYLE = {
 KIND_NAMES = {"image": "Image", "animation": "Animation", "video": "Video", "audio": "Audio", None: "Unknown"}
 
 
-class FileCard(ctk.CTkFrame):
-    def __init__(self, parent, path: Path, kind: str | None, on_remove, on_reveal, on_error) -> None:
-        super().__init__(parent, fg_color=T.SURFACE, corner_radius=T.RADIUS, border_width=1, border_color=T.BORDER)
-        self.path, self.kind = path, kind
-        self.size_bytes = path.stat().st_size if path.exists() else 0
-        self.state = "ready" if kind else "unsupported"
-        self.output: Path | None = None
-        self.error = ""
-        self.details: dict = {}
-        self.on_reveal, self.on_error = on_reveal, on_error
+@dataclass(eq=False)
+class FileItem:
+    """One file in the queue: everything the list needs to draw it, nothing tied to a widget."""
 
-        self.grid_columnconfigure(1, weight=1)
-        self.thumb = ctk.CTkLabel(self, text="", width=44, height=44, image=kind_tile(kind))
-        self.thumb.grid(row=0, column=0, rowspan=3, padx=(10, 12), pady=10)
+    path: Path
+    kind: str | None
+    size_bytes: int = 0
+    state: str = "ready"
+    fraction: float | None = None
+    detail: str = ""
+    output: Path | None = None
+    out_size: int = 0
+    error: str = ""
+    details: dict = field(default_factory=dict)
+    details_requested: bool = False
+    tile: object | None = None  # CTkImage of the thumbnail, kept in a bounded cache
+    flash: bool = False  # highlight once when it first comes into view
 
-        self.name = ctk.CTkLabel(self, text=path.name, anchor="w", font=T.font(13, "semibold"), text_color=T.TEXT, height=20)
-        self.name.grid(row=0, column=1, sticky="ew", pady=(10, 0))
-        self.meta = ctk.CTkLabel(self, text="", anchor="w", font=T.font(11), text_color=T.MUTED, height=18)
-        self.meta.grid(row=1, column=1, sticky="ew")
-        self.bar = SmoothProgress(self, height=4)
-        self.bar.grid(row=2, column=1, sticky="ew", pady=(4, 10))
-        self.bar.grid_remove()
-        self.spacer = ctk.CTkFrame(self, height=10, fg_color="transparent")
-        self.spacer.grid(row=2, column=1)
+    def __post_init__(self) -> None:
+        if self.kind is None:
+            self.state = "unsupported"
 
-        self.status = ctk.CTkLabel(self, text="", height=22, corner_radius=11, font=T.font(11, "semibold"))
-        self.status.grid(row=0, column=2, sticky="e", padx=(8, 4), pady=(10, 0))
-        self.status_tip = Tooltip(self.status, "")
-        self.result = ctk.CTkLabel(self, text="", anchor="e", font=T.font(11), text_color=T.MUTED, height=18)
-        self.result.grid(row=1, column=2, sticky="e", padx=(8, 4))
-        self.status.bind("<Button-1>", lambda _e: self._status_click())
-        self.result.bind("<Button-1>", lambda _e: self._status_click())
-
-        self.action = ghost_button(self, icon_name="close", command=lambda: on_remove(self), height=30)
-        self.action.grid(row=0, column=3, rowspan=3, padx=(0, 8))
-        self.action_tip = Tooltip(self.action, "Remove from list")
-
-        self._full_name = path.name
-        self.bind("<Configure>", lambda _e: self._fit_name())
-        self.update_meta()
-        self.set_state(self.state)
-
-    # -- content
-
-    def update_meta(self) -> None:
+    def meta_text(self) -> str:
         parts = [KIND_NAMES[self.kind], self.path.suffix.lstrip(".").upper() or "?", human_size(self.size_bytes)]
         d = self.details
         if d.get("size") and all(d["size"]):
@@ -645,80 +631,329 @@ class FileCard(ctk.CTkFrame):
             parts.append(human_duration(d["duration"]))
         if d.get("frames"):
             parts.append(f"{d['frames']} frames")
-        self.meta.configure(text="  ·  ".join(parts))
+        return "  ·  ".join(parts)
 
-    def set_details(self, thumb: Image.Image | None, details: dict) -> None:
-        if not self.winfo_exists():
-            return
-        self.details = details
-        if thumb is not None:
-            self.thumb.configure(image=thumb_tile(thumb, self.kind))
-        self.update_meta()
+
+class FileRow(ctk.CTkFrame):
+    """A reusable row. bind(item) makes it show that item; it never stores state of its own."""
+
+    HEIGHT = 64
+
+    def __init__(self, parent, on_remove, on_reveal, on_error) -> None:
+        super().__init__(parent, fg_color=T.SURFACE, corner_radius=T.RADIUS, border_width=1, border_color=T.BORDER,
+                         height=self.HEIGHT, bg_color=T.BG)
+        self.grid_propagate(False)  # fixed height: a progress bar appearing never moves anything
+        self.item: FileItem | None = None
+        self._shown_state: tuple | None = None
+        self.on_remove, self.on_reveal, self.on_error = on_remove, on_reveal, on_error
+        self.locked = False
+        self._tinted = False  # True while the "just added" highlight colours are on
+
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure((0, 1), weight=1)
+        self.thumb = ctk.CTkLabel(self, text="", width=44, height=44)
+        self.thumb.grid(row=0, column=0, rowspan=2, padx=(10, 12))
+        self.name = ctk.CTkLabel(self, text="", anchor="w", font=T.font(13, "semibold"), text_color=T.TEXT, height=20)
+        self.name.grid(row=0, column=1, sticky="sew")
+        self.meta = ctk.CTkLabel(self, text="", anchor="w", font=T.font(11), text_color=T.MUTED, height=18)
+        self.meta.grid(row=1, column=1, sticky="new")
+        self.bar = SmoothProgress(self, height=4)
+        self.status = ctk.CTkLabel(self, text="", height=22, corner_radius=11, font=T.font(11, "semibold"))
+        self.status.grid(row=0, column=2, sticky="se", padx=(8, 4))
+        self.status_tip = Tooltip(self.status, "")
+        self.result = ctk.CTkLabel(self, text="", anchor="e", font=T.font(11), text_color=T.MUTED, height=18)
+        self.result.grid(row=1, column=2, sticky="ne", padx=(8, 4))
+        for w in (self.status, self.result):
+            w.bind("<Button-1>", lambda _e: self._status_click())
+        self.action = ghost_button(self, icon_name="close", command=self._action, height=30)
+        self.action.grid(row=0, column=3, rowspan=2, padx=(0, 8))
+        self.action_tip = Tooltip(self.action, "")
+        self._name_width = 0
+        self.bind("<Configure>", lambda _e: self._fit_name(), add="+")
+        # Very subtle hover: the border lifts a little.
+        bind_tree(self, "<Enter>", lambda _e: self._hover(True))
+        bind_tree(self, "<Leave>", lambda _e: self._hover(False))
+
+    # -- binding
+
+    def bind_item(self, item: FileItem, lock: bool) -> None:
+        same = item is self.item
+        self.item, self.locked = item, lock
+        if not same:
+            self.thumb.configure(image=item.tile or kind_tile(item.kind))
+            self._name_width = 0
+            self._fit_name()
+            if item.flash and M.enabled():  # a newly added file: short highlight
+                item.flash = False
+                self._tinted = True
+                self.configure(fg_color=T.ACCENT_SOFT, border_color=T.ACCENT)
+                M.fade(self, 650, key="flash", fg_color=T.SURFACE, border_color=T.BORDER)
+            else:
+                item.flash = False
+                if self._tinted or M._jobs.get((str(self), "flash")):  # repaint only if it isn't plain already
+                    self._tinted = False
+                    M.cancel(self, "flash")
+                    self.configure(fg_color=T.SURFACE, border_color=T.BORDER)
+        elif item.tile is not None:
+            self.thumb.configure(image=item.tile)
+        self.meta.configure(text=item.meta_text())
+        self._show_state(animate=same)
 
     def _fit_name(self) -> None:
+        if self.item is None:
+            return
         avail = self.name.winfo_width()
-        if avail > 10:
-            s = scaling(self)
-            self.name.configure(text=fit_text(self._full_name, T.font(13, "semibold"), avail / s - 4))
+        if avail > 10 and avail != self._name_width:
+            self._name_width = avail
+            self.name.configure(text=fit_text(self.item.path.name, T.font(13, "semibold"), avail / scaling(self) - 4))
+        elif avail <= 10:
+            self.name.configure(text=self.item.path.name)
 
-    # -- state
-
-    def set_state(self, state: str, fraction: float | None = None, detail: str = "") -> None:
-        self.state = state
-        label, fg, bg = STATUS_STYLE[state]
-        if state == "working" and fraction is not None:
-            label = f"{label} {fraction * 100:.0f}%"
-        self.status.configure(text=f"  ●  {label}  ")
-        M.fade(self.status, M.NORMAL if getattr(self, "_shown", False) else 0, text_color=fg, fg_color=bg)
-        self._shown = True
-        self.status.configure(cursor="hand2" if state in ("failed", "done") else "")
-        if state == "working":
-            self.spacer.grid_remove()
-            self.bar.grid()
-            if fraction is not None:
-                self.bar.glide(fraction)
-        else:
-            self.bar.grid_remove()
-            self.bar.jump(0)
-            self.spacer.grid()
-
-        tips = {"failed": f"{self.error}\n\nClick for full details.", "skipped": detail,
-                "unsupported": "This file type can't be converted.", "done": "Click to show the file in Explorer"}
-        self.status_tip.set(tips.get(state, ""))
-
-        if state == "done" and self.output and self.output.exists():
-            out_size = self.output.stat().st_size
+    def _show_state(self, animate: bool) -> None:
+        item = self.item
+        key = (item.state, None if item.fraction is None else round(item.fraction, 2), item.detail, item.error,
+               str(item.output), self.locked)
+        if key == self._shown_state:  # the key covers everything this part shows, so nothing would change
+            return
+        label, fg, bg = STATUS_STYLE[item.state]
+        if item.state == "working" and item.fraction is not None:
+            label = f"{label} {item.fraction * 100:.0f}%"
+        self.status.configure(text=f"  ●  {label}  ", cursor="hand2" if item.state in ("failed", "done") else "")
+        state_changed = self._shown_state is None or self._shown_state[0] != item.state
+        M.fade(self.status, M.NORMAL if (animate and state_changed) else 0, text_color=fg, fg_color=bg)
+        if item.state == "working":
+            if not self.bar.winfo_manager():  # placed already? (it may not be drawn yet, so not winfo_ismapped)
+                self.bar.place(in_=self.meta, relx=0, rely=1.0, y=4, relwidth=1.0, anchor="nw")
+                self.bar.jump(0)
+            if item.fraction is not None:
+                self.bar.glide(item.fraction) if animate else self.bar.jump(item.fraction)
+        elif self.bar.winfo_manager():
+            self.bar.place_forget()
+        tips = {"failed": f"{item.error}\n\nClick for full details.", "skipped": item.detail,
+                "unsupported": "This file type can't be converted.", "done": "Click to show the file in its folder"}
+        self.status_tip.set(tips.get(item.state, ""))
+        if item.state == "done" and item.output:
             change = ""
-            if self.size_bytes:
-                pct = (1 - out_size / self.size_bytes) * 100
-                if pct >= 1:
-                    change = f"  ·  {pct:.0f}% smaller"
-                elif pct <= -1:
-                    change = f"  ·  {-pct:.0f}% larger"
-            self.result.configure(text=f"{self.output.suffix.lstrip('.').upper()}  ·  {human_size(out_size)}{change}",
+            if item.size_bytes and item.out_size:
+                pct = (1 - item.out_size / item.size_bytes) * 100
+                change = f"  ·  {pct:.0f}% smaller" if pct >= 1 else (f"  ·  {-pct:.0f}% larger" if pct <= -1 else "")
+            self.result.configure(text=f"{item.output.suffix.lstrip('.').upper()}  ·  {human_size(item.out_size)}{change}",
                                   text_color=T.SUCCESS if "smaller" in change else T.MUTED, cursor="hand2")
-            # A file can finish while the list is locked for the batch; "Show in folder" must work at once.
-            self.action.configure(image=T.icon("folder_open", 15, T.MUTED), command=lambda: self.on_reveal(self.output),
-                                  state="normal")
+            self.action.configure(image=T.icon("folder_open", 15, T.MUTED), state="normal")
             self.action_tip.set("Show in folder")
-        elif state == "failed":
-            first = (self.error.strip().splitlines() or ["Unknown error"])[0]
-            self.result.configure(text=fit_text(first, T.font(11), 260, end=True), text_color=T.ERROR, cursor="hand2")
-        elif state == "skipped":
-            self.result.configure(text=fit_text(detail, T.font(11), 260, end=True), text_color=T.WARNING, cursor="")
         else:
-            self.result.configure(text="", cursor="")
+            if item.state == "failed":
+                first = (item.error.strip().splitlines() or ["Unknown error"])[0]
+                self.result.configure(text=fit_text(first, T.font(11), 260, end=True), text_color=T.ERROR, cursor="hand2")
+            elif item.state == "skipped":
+                self.result.configure(text=fit_text(item.detail, T.font(11), 260, end=True), text_color=T.WARNING, cursor="")
+            else:
+                self.result.configure(text="", cursor="")
+            self.action.configure(image=T.icon("close", 15, T.MUTED), state="disabled" if self.locked else "normal")
+            self.action_tip.set("Remove from list")
+        self._shown_state = key
 
-    def reset_action(self, on_remove) -> None:
-        self.action.configure(image=T.icon("close", 15, T.MUTED), command=lambda: on_remove(self))
-        self.action_tip.set("Remove from list")
+    # -- interaction
 
-    def set_locked(self, locked: bool) -> None:
-        """During a batch only "Remove" is locked; "Show in folder" on finished files always works."""
-        self.action.configure(state="disabled" if locked and self.state != "done" else "normal")
+    def _hover(self, on: bool) -> None:
+        if self.item is not None and not M._jobs.get((str(self), "flash")):
+            M.fade(self, M.FAST, key="hover", border_color=T.BORDER_STRONG if on else T.BORDER)
+
+    def _action(self) -> None:
+        if self.item is None:
+            return
+        if self.item.state == "done" and self.item.output:
+            self.on_reveal(self.item.output)
+        elif not self.locked:
+            self.on_remove(self.item)
 
     def _status_click(self) -> None:
-        if self.state == "done" and self.output:
-            self.on_reveal(self.output)
-        elif self.state == "failed":
-            self.on_error(self)
+        if self.item is None:
+            return
+        if self.item.state == "done" and self.item.output:
+            self.on_reveal(self.item.output)
+        elif self.item.state == "failed":
+            self.on_error(self.item)
+
+
+class VirtualFileList(ctk.CTkFrame):
+    """A scrolling list that only creates as many rows as fit on screen, and reuses them as you scroll."""
+
+    GAP = 8
+    TILE_CACHE = 150  # thumbnails kept in memory; others are re-made if they scroll back into view
+
+    def __init__(self, parent, on_remove, on_reveal, on_error, request_details) -> None:
+        super().__init__(parent, fg_color=T.BG, corner_radius=0)
+        self.on_remove, self.on_reveal, self.on_error = on_remove, on_reveal, on_error
+        self.request_details = request_details
+        self.items: list[FileItem] = []
+        self.rows: list[tuple[FileRow, int]] = []
+        self.locked = False
+        self.top = 0.0  # pixels scrolled from the top
+        self._target = 0.0
+        self._gap_at: int | None = None  # index where a removal animation is closing a gap
+        self._gap = 0.0
+        self._tiles: list[FileItem] = []  # most recently made thumbnails, newest last
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+        self.canvas = tk.Canvas(self, highlightthickness=0, bd=0, bg=T.resolve(T.BG))
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.scrollbar = ctk.CTkScrollbar(self, command=self._on_scrollbar, button_color=T.BORDER_STRONG,
+                                          button_hover_color=T.FAINT, fg_color=T.BG)
+        self.scrollbar.grid(row=0, column=1, sticky="ns")
+        # Reserve the scrollbar's column even while it's hidden, so it appearing doesn't narrow and redraw every row.
+        self.grid_columnconfigure(1, minsize=self.scrollbar.winfo_reqwidth())
+        self._win_state: dict[int, tuple] = {}  # last (width, state) given to each row window, to skip no-op reconfigures
+        self.canvas.bind("<Configure>", lambda _e: self.layout())
+        self._bind_wheel(self.canvas)
+
+    # -- data
+
+    def set_items(self, items: list[FileItem]) -> None:
+        self.items = items
+        self.layout()
+
+    def refresh_item(self, item: FileItem) -> None:
+        for row, _ in self.rows:
+            if row.item is item:
+                row.bind_item(item, self.locked)
+                return
+
+    def set_locked(self, locked: bool) -> None:
+        self.locked = locked
+        for row, _ in self.rows:
+            if row.item is not None:
+                row.bind_item(row.item, locked)
+
+    def remove(self, item: FileItem) -> None:
+        if item not in self.items:
+            return
+        idx = self.items.index(item)
+        self.items.remove(item)
+        if M.enabled():  # the rows below glide up into the freed space
+            row_h = self._row_h()
+            self._gap_at, self._gap = idx, row_h
+
+            def step(t: float) -> None:
+                self._gap = row_h * (1 - t)
+                self.layout()
+
+            M.animate(self, "gap", M.NORMAL, step, done=self._end_gap, ease=M.ease_in_out)
+        else:
+            self.layout()
+
+    def _end_gap(self) -> None:
+        self._gap_at, self._gap = None, 0.0
+        self.layout()
+
+    def remember_tile(self, item: FileItem) -> None:
+        """Keep a bounded number of thumbnails in memory."""
+        if item in self._tiles:
+            self._tiles.remove(item)
+        self._tiles.append(item)
+        while len(self._tiles) > self.TILE_CACHE:
+            old = self._tiles.pop(0)
+            if not any(row.item is old for row, _ in self.rows):
+                old.tile, old.details_requested = None, False
+
+    # -- layout
+
+    def _row_h(self) -> float:
+        return (FileRow.HEIGHT + self.GAP) * scaling(self)
+
+    def _max_top(self) -> float:
+        return max(0.0, len(self.items) * self._row_h() - self.canvas.winfo_height())
+
+    def layout(self) -> None:
+        height, width = self.canvas.winfo_height(), self.canvas.winfo_width()
+        if height < 10 or width < 10:
+            return
+        row_h = self._row_h()
+        self.top = min(max(self.top, 0.0), self._max_top())
+        need = int(height // row_h) + 3
+        while len(self.rows) < need:
+            row = FileRow(self.canvas, self.on_remove, self.on_reveal, self.on_error)
+            self._bind_wheel(row)
+            win = self.canvas.create_window(0, 0, window=row, anchor="nw", state="hidden")
+            self.rows.append((row, win))
+        first = int(self.top // row_h)
+        pad = int(6 * scaling(self))
+        n = len(self.rows)
+        for k in range(n):
+            # File number idx always uses row idx % n, so scrolling past one row re-uses just one row, not all of them.
+            idx = first + k
+            row, win = self.rows[idx % n]
+            if idx < len(self.items):
+                item = self.items[idx]
+                y = idx * row_h - self.top + (self._gap if self._gap_at is not None and idx >= self._gap_at else 0)
+                self.canvas.coords(win, 0, round(y))
+                self._configure_win(win, width - pad, "normal")
+                if row.item is not item:
+                    row.bind_item(item, self.locked)
+                    if item.kind and not item.details_requested:
+                        item.details_requested = True
+                        self.request_details(item)
+            else:
+                self._configure_win(win, None, "hidden")
+                row.item = None
+        total = len(self.items) * row_h
+        if total <= height:
+            self.scrollbar.grid_remove()
+        else:
+            self.scrollbar.grid()
+            self.scrollbar.set(self.top / total, min(1.0, (self.top + height) / total))
+
+    def _configure_win(self, win: int, width: int | None, state: str) -> None:
+        old_width, old_state = self._win_state.get(win, (None, None))
+        width = old_width if width is None else width
+        if (width, state) != (old_width, old_state):
+            self._win_state[win] = (width, state)
+            self.canvas.itemconfigure(win, **({"width": width} if width else {}), state=state)
+
+    # -- scrolling (eased, so a wheel notch glides instead of jumping)
+
+    def _scroll_to(self, target: float, animate: bool = True) -> None:
+        self._target = min(max(target, 0.0), self._max_top())
+        if not animate or not M.enabled():
+            self.top = self._target
+            self.layout()
+            return
+        start = self.top
+
+        def step(t: float) -> None:
+            self.top = start + (self._target - start) * t
+            self.layout()
+
+        M.animate(self, "scroll", M.FAST, step)
+
+    def _on_scrollbar(self, *args) -> None:
+        total = len(self.items) * self._row_h()
+        if args and args[0] == "moveto":
+            self._scroll_to(float(args[1]) * total, animate=False)
+        elif args and args[0] == "scroll":
+            amount = int(args[1]) * (self._row_h() if args[2] == "units" else self.canvas.winfo_height())
+            self._scroll_to(self._target + amount)
+
+    def _bind_wheel(self, widget) -> None:
+        def wheel(event) -> str:
+            if sys.platform == "darwin":
+                delta = -event.delta * 6
+            elif getattr(event, "num", None) in (4, 5):
+                delta = -120 if event.num == 4 else 120
+            else:
+                delta = -event.delta
+            base = self._target if M._jobs.get((str(self), "scroll")) else self.top
+            self._scroll_to(base + delta / 120 * self._row_h() * 1.5)
+            return "break"
+
+        for w in (widget, *widget.winfo_children()):
+            w.bind("<MouseWheel>", wheel, add="+")
+            w.bind("<Button-4>", wheel, add="+")
+            w.bind("<Button-5>", wheel, add="+")
+            for child in w.winfo_children():
+                child.bind("<MouseWheel>", wheel, add="+")
+
+    def _set_appearance_mode(self, mode_string) -> None:
+        super()._set_appearance_mode(mode_string)
+        self.canvas.configure(bg=T.resolve(T.BG))
