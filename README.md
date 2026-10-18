@@ -4,6 +4,8 @@
 
 <p align="center">A desktop app for Windows that converts images, GIFs, video and audio between all the common formats, and downloads videos from YouTube, TikTok and other links. Everything runs on your own computer.</p>
 
+<p align="center"><img src="docs/screenshot.png" width="760" alt="Media Converter after converting four files to MP4, with the format choices on the right"></p>
+
 ## What it does
 
 | You have | You can make |
