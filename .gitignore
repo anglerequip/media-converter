@@ -11,3 +11,5 @@ build/work/
 build/version_info.txt
 dist/
 build/cache/
+build/ffmpeg/work/
+build/ffmpeg/out/
