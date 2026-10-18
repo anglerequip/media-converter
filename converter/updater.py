@@ -36,8 +36,8 @@ def parse_version(text: str) -> tuple[int, ...]:
     return tuple(int(p) for p in re.findall(r"\d+", text)[:3]) or (0,)
 
 
-def _get(url: str, timeout: int = 15) -> bytes:
-    request = urllib.request.Request(url, headers=_HEADERS)
+def _get(url: str, timeout: int = 15, headers: dict | None = None) -> bytes:
+    request = urllib.request.Request(url, headers={**_HEADERS, **(headers or {})})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.read()
@@ -47,7 +47,11 @@ def _get(url: str, timeout: int = 15) -> bytes:
 
 def latest_version() -> tuple[str, list[str]]:
     """Return (newest version on GitHub, short list of recent changes)."""
-    source = _get(f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/converter/__init__.py").decode("utf-8", "replace")
+    try:  # the API is up to date the moment a change is pushed
+        source = _get(f"https://api.github.com/repos/{REPO}/contents/converter/__init__.py?ref={BRANCH}",
+                      headers={"Accept": "application/vnd.github.raw"}).decode("utf-8", "replace")
+    except UpdateError:  # e.g. the hourly API limit: fall back to the raw file, which can lag a few minutes
+        source = _get(f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/converter/__init__.py").decode("utf-8", "replace")
     match = re.search(r'__version__\s*=\s*"([^"]+)"', source)
     if not match:
         raise UpdateError("GitHub answered, but the version number couldn't be read.")
