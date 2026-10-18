@@ -154,7 +154,9 @@ build_libs() {
   if [[ $OS == mac ]]; then
     libtool -static -o "$PREFIX/lib/libx265.a" "$xb/8/libx265.a" "$xb/8/libx265_main10.a" 2>/dev/null
   else
-    printf 'CREATE %s\nADDLIB %s\nADDLIB %s\nSAVE\nEND\n' "$PREFIX/lib/libx265.a" "$xb/8/libx265.a" "$xb/8/libx265_main10.a" | ar -M
+    # MinGW's ar can't use MSYS-style absolute paths in an MRI script, so merge inside the build folder.
+    (cd "$xb/8" && printf 'CREATE libx265_all.a\nADDLIB libx265.a\nADDLIB libx265_main10.a\nSAVE\nEND\n' | ar -M)
+    cp "$xb/8/libx265_all.a" "$PREFIX/lib/libx265.a"
   fi
   # A static build must not pull in the shared GCC runtime (Windows) — the C++ runtime is linked in statically below.
   [[ $OS == windows ]] && sed -i -E 's/ -lgcc_s//g; s/ -lgcc( |$)/ /g' "$PREFIX/lib/pkgconfig/x265.pc"
@@ -216,7 +218,8 @@ ffmpeg_configure() {  # ffmpeg_configure <build dir> [extra options...]
 build_ffmpeg() {
   step "FFmpeg $FFMPEG_VERSION: ffmpeg (full codec set)"
   ffmpeg_configure "$WORK/b/ff-full" --disable-ffprobe \
-    --enable-libx264 --enable-libx265 --enable-libsvtav1 --enable-libaom --enable-libvpx --enable-libdav1d \
+    --enable-libx264 --enable-libx265 --enable-libsvtav1 --enable-libaom --disable-decoder=libaom_av1 \
+    --enable-libvpx --enable-libdav1d \
     --enable-libwebp --enable-libmp3lame --enable-libopus --enable-libvorbis
   step "FFmpeg $FFMPEG_VERSION: ffprobe (decode only)"
   ffmpeg_configure "$WORK/b/ff-probe" --disable-ffmpeg --disable-avfilter --disable-swscale --disable-swresample \
