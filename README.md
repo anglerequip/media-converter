@@ -82,6 +82,12 @@ python -m converter download "https://www.tiktok.com/@user/video/..." --mode com
 python -m converter formats song.flac       # what can this file become?
 ```
 
+## Updating
+
+Press the **refresh button** next to Settings in the top-right corner (or **Settings → Check for updates**). The app asks GitHub whether a newer version exists, shows what changed, and installs it only if you say yes. It then offers to restart.
+
+If you installed with `git clone`, the update runs `git pull`; it stops without changing anything if files in the app folder were edited by hand. If you downloaded a zip instead, the newest files are downloaded and copied over the old ones. Your settings are stored separately and are kept.
+
 ## When a site stops working
 
 Video sites change often. If downloads from one start failing, press **Update downloader** in the app (or run `pip install -U --pre "yt-dlp[default,curl-cffi]"`) and restart.

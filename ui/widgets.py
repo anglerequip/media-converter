@@ -687,7 +687,9 @@ class FileCard(ctk.CTkFrame):
                     change = f"  ·  {-pct:.0f}% larger"
             self.result.configure(text=f"{self.output.suffix.lstrip('.').upper()}  ·  {human_size(out_size)}{change}",
                                   text_color=T.SUCCESS if "smaller" in change else T.MUTED, cursor="hand2")
-            self.action.configure(image=T.icon("folder_open", 15, T.MUTED), command=lambda: self.on_reveal(self.output))
+            # A file can finish while the list is locked for the batch; "Show in folder" must work at once.
+            self.action.configure(image=T.icon("folder_open", 15, T.MUTED), command=lambda: self.on_reveal(self.output),
+                                  state="normal")
             self.action_tip.set("Show in folder")
         elif state == "failed":
             first = (self.error.strip().splitlines() or ["Unknown error"])[0]
@@ -702,8 +704,8 @@ class FileCard(ctk.CTkFrame):
         self.action_tip.set("Remove from list")
 
     def set_locked(self, locked: bool) -> None:
-        if self.state != "done":
-            self.action.configure(state="disabled" if locked else "normal")
+        """During a batch only "Remove" is locked; "Show in folder" on finished files always works."""
+        self.action.configure(state="disabled" if locked and self.state != "done" else "normal")
 
     def _status_click(self) -> None:
         if self.state == "done" and self.output:
