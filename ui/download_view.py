@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 import customtkinter as ctk
 
+from converter import spotify
 from converter.downloader import download
 from converter.ffmpeg_tools import Cancelled, ConversionError
 
@@ -29,6 +30,10 @@ SITE_NAMES = {
     "linkedin": "LinkedIn", "snapchat": "Snapchat", "threads": "Threads", "bluesky": "Bluesky",
 }
 MEDIA_EXTS = (".mp4", ".webm", ".mov", ".mkv", ".m4v", ".mp3", ".m4a", ".ogg", ".wav", ".flac", ".m3u8", ".gif")
+SPOTIFY_KINDS = {"track": "song", "album": "album", "playlist": "playlist"}
+SPOTIFY_NOTE = ("Spotify's own audio is copy-protected, so each song is found on YouTube Music and saved as audio "
+                "with Spotify's title, artist, album and cover. M4A keeps that audio exactly as it is; MP3 converts "
+                "it for older devices.")
 MODE_TEXT = {
     "best": "The highest resolution and quality the site offers, saved as MP4. On YouTube this is often AV1 or VP9 "
             "video, which Windows 11 plays.",
@@ -258,13 +263,26 @@ class DownloadView(ctk.CTkFrame):
             parsed = urlparse(url)
             if parsed.scheme not in ("http", "https") or "." not in parsed.netloc or " " in url:
                 self._show_check("error", "That doesn't look like a web address. Links start with https://")
+            elif spotify.parse_link(url) and spotify.parse_link(url)[0] in SPOTIFY_KINDS:
+                self.url_ok = True
+                kind = SPOTIFY_KINDS[spotify.parse_link(url)[0]]
+                extra = (f" Only the first {spotify.PLAYLIST_LIMIT} songs of a playlist are available."
+                         if kind == "playlist" else "")
+                self._show_check("ok", f"Spotify {kind} link recognised. It will be saved as audio.{extra}")
+            elif spotify.parse_link(url) and spotify.parse_link(url)[0] == "artist":
+                self._show_check("error", "Artist pages aren't supported. Open one of the artist's albums or songs "
+                                          "and copy that link instead.")
             elif self.extractors is None:
                 self.url_ok = True
                 self._show_check("info", "Checking the link…")
             else:
                 ie = self._site_for(url)
                 self.url_ok = True
-                if ie is not None:
+                if ie is not None and ie.IE_NAME.upper() == "DRM":  # yt-dlp's list of copy-protected sites
+                    self.url_ok = False
+                    what = "Spotify podcast episodes are" if spotify.parse_link(url) else "Videos from this site are"
+                    self._show_check("error", f"{what} copy-protected (DRM), so they can't be downloaded.")
+                elif ie is not None:
                     key = ie.IE_NAME.split(":")[0].lower()
                     name = SITE_NAMES.get(key, ie.IE_NAME.split(":")[0].replace("_", " ").title())
                     if not ie.working():
@@ -279,11 +297,16 @@ class DownloadView(ctk.CTkFrame):
                                              "will probably not work.")
                 q = parsed.query.lower()
                 show_playlist = "list=" in q or "/playlist" in parsed.path.lower() or "/sets/" in parsed.path.lower()
-        if show_playlist:
+        if show_playlist and not self._spotify_music():
             self.playlist.grid(row=self.playlist_row, column=0, sticky="w", pady=(10, 0))
         else:
             self.playlist.grid_remove()
+        self._on_mode(self.mode.get(), save=False)
         self._update_button()
+
+    def _spotify_music(self) -> bool:
+        link = spotify.parse_link(self._clean_url())
+        return bool(link and link[0] in SPOTIFY_KINDS)
 
     def _update_button(self) -> None:
         set_primary_enabled(self.dl_btn, self.url_ok and not self.busy)
@@ -305,7 +328,13 @@ class DownloadView(ctk.CTkFrame):
     def _on_mode(self, mode: str, save: bool = True) -> None:
         if save:
             self.s["dl_mode"] = mode
-        self.mode_text.configure(text=MODE_TEXT[mode])
+        if self._spotify_music():
+            note = SPOTIFY_NOTE
+            if mode not in ("mp3", "m4a"):
+                note = "Spotify links are saved as audio only, so this will be saved as M4A. " + SPOTIFY_NOTE
+            self.mode_text.configure(text=note)
+        else:
+            self.mode_text.configure(text=MODE_TEXT[mode])
 
     def pick_dir(self) -> None:
         folder = filedialog.askdirectory(parent=self, title="Save downloads to", initialdir=str(self.dl_dir))
@@ -333,6 +362,11 @@ class DownloadView(ctk.CTkFrame):
         self.bar.jump(0)
         self.status.configure(text="Connecting…", text_color=T.MUTED)
         mode = self.mode.get()
+        if self._spotify_music():
+            fmt = mode if mode in ("mp3", "m4a") else "m4a"
+            self.status.configure(text="Reading the Spotify link…", text_color=T.MUTED)
+            threading.Thread(target=self._spotify_worker, args=(url, fmt), daemon=True).start()
+            return
         playlist = bool(self.playlist.get()) and bool(self.playlist.winfo_ismapped())
         threading.Thread(target=self._worker, args=(url, mode, playlist), daemon=True).start()
 
@@ -358,6 +392,50 @@ class DownloadView(ctk.CTkFrame):
         except Exception as exc:
             self.events.put(("failed", friendly_error(f"{type(exc).__name__}: {exc}")))
 
+    def _spotify_worker(self, url: str, fmt: str) -> None:
+        def progress(fraction: float, text: str) -> None:
+            self.events.put(("progress", fraction, text))
+
+        try:
+            result = spotify.download(url, self.dl_dir, fmt, progress, self.cancel_event,
+                                      on_saved=lambda path: self.events.put(("saved", path)))
+            self.events.put(("spotify_done", result))
+        except Cancelled:
+            self.events.put(("cancelled",))
+        except ConversionError as exc:
+            self.events.put(("failed", friendly_error(str(exc))))
+        except Exception as exc:
+            self.events.put(("failed", friendly_error(f"{type(exc).__name__}: {exc}")))
+
+    def _spotify_summary(self, result) -> None:
+        saved, missing, failed, existing = (len(result.saved), len(result.no_match), len(result.failed),
+                                            len(result.skipped_existing))
+        parts = [f"Saved {saved} song{'s' if saved != 1 else ''}"]
+        if existing:
+            parts.append(f"{existing} already saved")
+        if missing:
+            parts.append(f"{missing} not found")
+        if failed:
+            parts.append(f"{failed} failed")
+        tone_ok = not missing and not failed
+        self.status.configure(text=", ".join(parts) + ".", text_color=T.SUCCESS if tone_ok else T.WARNING)
+        notes = []
+        if missing:
+            names = [m.split(":")[0] for m in result.no_match[:3]]
+            notes.append("No confident match on YouTube Music for: " + "; ".join(names)
+                         + (f" and {missing - 3} more" if missing > 3 else "") + ". These were skipped rather than guessed.")
+        if failed:
+            notes.append("Couldn't download: " + "; ".join(f.split(":")[0] for f in result.failed[:3]) + ".")
+        if result.truncated:
+            notes.append(f"Spotify only shares the first {spotify.PLAYLIST_LIMIT} songs of a playlist.")
+        if notes:
+            self._show_check("warn", " ".join(notes))
+        else:
+            self._show_check(None, "")
+        if saved:
+            self.entry.delete(0, "end")
+        self.app.notify_done(saved, missing + failed)
+
     def _drain(self) -> None:
         try:
             while True:
@@ -367,12 +445,18 @@ class DownloadView(ctk.CTkFrame):
                     self._validate()
                 elif kind == "progress":
                     self.bar.glide(ev[1])
-                    self.status.configure(text=f"{ev[2]}  ·  {ev[1] * 100:.0f}%", text_color=T.MUTED)
-                elif kind in ("done", "failed", "cancelled"):
+                    self.status.configure(text=fit_text(f"{ev[2]}  ·  {ev[1] * 100:.0f}%", T.font(12), 520),
+                                          text_color=T.MUTED)
+                elif kind == "saved":  # a Spotify song finished: show it straight away
+                    self._add_history(ev[1])
+                elif kind in ("done", "failed", "cancelled", "spotify_done"):
                     self.busy = False
                     self.app.set_busy(False)
                     self.cancel_btn.grid_remove()
-                    if kind == "done":
+                    if kind == "spotify_done":
+                        self.bar.glide(1.0)
+                        self._spotify_summary(ev[1])
+                    elif kind == "done":
                         self.bar.glide(1.0)
                         for f in ev[1]:
                             self._add_history(f)
@@ -391,9 +475,11 @@ class DownloadView(ctk.CTkFrame):
                         self.status.configure(text="Download cancelled. Partial files were removed.", text_color=T.MUTED)
                     self.after(800, self.bar.grid_remove)
                     self.url_ok = bool(self._clean_url())
-                    self._update_button() if kind != "done" else set_primary_enabled(self.dl_btn, False)
-                    if kind != "done":
-                        self._validate()
+                    # Keep the result message on screen; only re-enable the button if a link is still entered.
+                    if kind == "done":
+                        set_primary_enabled(self.dl_btn, False)
+                    else:
+                        set_primary_enabled(self.dl_btn, self.url_ok)
         except queue.Empty:
             pass
         self.after(80, self._drain)

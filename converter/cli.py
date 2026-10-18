@@ -12,6 +12,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from . import spotify
 from .downloader import MODES, download
 from .engine import QUALITIES, VIDEO_CODECS, Options, convert
 from .ffmpeg_tools import Cancelled, ConversionError
@@ -72,6 +73,16 @@ def main(argv: list[str] | None = None) -> int:
         for url in args.urls:
             print(url)
             try:
+                link = spotify.parse_link(url)
+                if link and link[0] in ("track", "album", "playlist"):
+                    fmt = args.mode if args.mode in ("mp3", "m4a") else "m4a"
+                    result = spotify.download(url, args.out, fmt, progress=_bar)
+                    for out in result.saved:
+                        print(f"\n  saved {out}")
+                    for line in result.no_match + result.failed:
+                        failures += 1
+                        print(f"\n  skipped {line}")
+                    continue
                 for out in download(url, args.out, args.mode, args.playlist, progress=_bar):
                     print(f"\n  saved {out}")
             except (ConversionError, Cancelled) as exc:

@@ -2,13 +2,18 @@
 
 <h1 align="center">Media Converter</h1>
 
-<p align="center">Convert images, GIFs, videos and audio on Windows, and save videos from YouTube, TikTok and other sites.<br>
-Free, private (everything runs on your PC) and maximum quality by default.</p>
+<p align="center">Convert images, GIFs, videos and audio on Windows, and save videos and music from YouTube, TikTok, Spotify and other sites.<br>
+Free, open source and private: everything runs on your own PC.</p>
 
 <p align="center">
-  <a href="https://github.com/anglerequip/media-converter/releases/latest/download/MediaConverter-Setup.exe"><img src="docs/download-button.svg" width="286" alt="Download for Windows"></a>
+  <a href="https://github.com/anglerequip/media-converter/releases/latest/download/MediaConverter-Setup.exe">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/download-dark.svg">
+      <img src="docs/download-light.svg" width="232" height="40" alt="Download for Windows">
+    </picture>
+  </a>
 </p>
-<p align="center"><sub>Windows 10 and 11 &nbsp;·&nbsp; everything included, nothing else to install &nbsp;·&nbsp; <a href="https://github.com/anglerequip/media-converter/releases/latest">portable version and release notes</a></sub></p>
+<p align="center"><sub>MediaConverter-Setup.exe &nbsp;·&nbsp; about 95 MB &nbsp;·&nbsp; Windows 10 and 11 &nbsp;·&nbsp; from <a href="https://github.com/anglerequip/media-converter/releases/latest">GitHub Releases</a>, where you'll also find the portable version</sub></p>
 
 <p align="center"><img src="docs/screenshot.png" width="760" alt="Media Converter after converting four files to MP4, with the format choices on the right"></p>
 
@@ -17,6 +22,7 @@ Free, private (everything runs on your PC) and maximum quality by default.</p>
 - **All the usual formats:** PNG, JPG, WebP, HEIC, AVIF, GIF, TIFF, ICO, PDF · MP4, MOV, MKV, WebM, AVI · MP3, WAV, FLAC, M4A, OGG, Opus
 - **Animations done right:** WebP ↔ GIF ↔ MP4 with exact frame timing and transparency
 - **Video links to MP4 or MP3:** YouTube, TikTok, Instagram, X, Reddit, Vimeo and over a thousand more sites
+- **Spotify songs, albums and playlists** saved as tagged MP3 or M4A with cover art (see the notes below)
 - **Maximum quality by default**, with simple Smaller / Balanced / High / Maximum choices
 - **No needless re-encoding:** MKV → MP4 and similar changes are instant and lossless
 - **Batches:** drag in files or whole folders and see progress and space saved
@@ -71,6 +77,7 @@ Drop files in, pick a format and press **Convert Files**. To save a video, paste
 
 - **Best video** picks the highest resolution offered; on YouTube that is often AV1 or VP9, which Windows 11 plays. Choose **Compatible video** (H.264) for older devices.
 - Private, age-restricted, members-only and copy-protected videos are not supported.
+- **Spotify:** Spotify's own audio is copy-protected and is never touched. The app reads each song's title, artist, length and cover from Spotify, finds the same recording on YouTube Music, and saves that audio with Spotify's details. A song is only saved when length, artist and title all match; otherwise it is skipped rather than guessed. M4A keeps YouTube's audio as it is (about 128 kbps AAC); MP3 converts it for older devices. Playlists are limited to their first 100 songs, and podcasts can't be saved because Spotify protects them.
 - If a site stops working, check for updates: each release ships with the newest yt-dlp.
 
 </details>

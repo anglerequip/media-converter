@@ -79,7 +79,21 @@ def run(out_file: str, urls: list[str]) -> int:
         import yt_dlp
 
         report["yt_dlp"] = yt_dlp.version.__version__
+        from . import spotify
+
         for url in urls:
+            if spotify.is_spotify(url):  # read Spotify and find the YouTube Music match, without downloading
+                try:
+                    collection = spotify.read(url)
+                    match = spotify.find_match(collection.tracks[0])
+                    report["links"].append({"url": url, "ok": True, "title": collection.tracks[0].title,
+                                            "match": f"{match.get('track') or match.get('title')} / "
+                                                     f"{', '.join(match.get('artists') or [])}",
+                                            "songs": len(collection.tracks)})
+                except Exception as exc:
+                    failures += 1
+                    report["links"].append({"url": url, "ok": False, "error": str(exc)[:300]})
+                continue
             try:
                 with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "simulate": True, "format": "bv*+ba/b",
                                        "logger": _Quiet()}) as ydl:

@@ -109,6 +109,8 @@ def download(
         "retries": 5,
         "fragment_retries": 5,
         "concurrent_fragment_downloads": 4,
+        # Fetching in 10 MB pieces avoids most of YouTube's occasional "403 Forbidden" refusals.
+        "http_chunk_size": 10 * 1024 * 1024,
         "progress_hooks": [on_progress],
         "postprocessor_hooks": [on_postprocess],
         **_options(mode),

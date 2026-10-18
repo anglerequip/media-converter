@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="232" height="40" viewBox="0 0 232 40" role="img" aria-label="Download for Windows">
+  <title>Download for Windows</title>
+  <rect x="0.5" y="0.5" width="231" height="39" rx="6" fill="#212830" stroke="#3D444D"/>
+  <g fill="none" stroke="#F0F6FC" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" transform="translate(18 11)">
+    <path d="M9 1.5v10.5M4.5 7.8 9 12.3l4.5-4.5M2 16.5h14"/>
+  </g>
+  <text x="46" y="25.5" fill="#F0F6FC" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif"
+        font-size="14" font-weight="600">Download for Windows</text>
+</svg>
