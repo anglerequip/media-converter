@@ -1,7 +1,7 @@
-# Third-party components in MediaConverter.exe
+# Third-party components in the Windows and Mac apps
 
-Media Converter's own code is MIT-licensed (see `LICENSE`). The Windows release bundles the components below, unchanged,
-at the exact versions in `build/requirements-lock.txt` and `build/build.ps1`. Each keeps its own licence.
+Media Converter's own code is MIT-licensed (see `LICENSE`). The Windows and Mac releases bundle the components below, unchanged,
+at the exact versions in `build/requirements-lock.txt`, `build/build.ps1` and `build/build_mac.sh`. Each keeps its own licence.
 
 Because FFmpeg, x265 (inside pillow-heif) and mutagen are licensed under the GNU GPL, the release as a whole is
 distributed in a way that complies with the GPL: Media Converter's complete source code, including the build scripts,
@@ -9,7 +9,9 @@ is public in this repository, and the source of every component is available fro
 
 | Component | Version | Licence | Used for | Source |
 |---|---|---|---|---|
-| FFmpeg (full shared build by Gyan Doshi) | 9.0.2 | GPL-3.0 | Video, audio and animation conversion | https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz · build scripts: https://github.com/GyanD/codexffmpeg |
+| FFmpeg (Windows: full shared build by Gyan Doshi) | 9.0.2 | GPL-3.0 | Video, audio and animation conversion | https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz · build scripts: https://github.com/GyanD/codexffmpeg |
+| FFmpeg (Mac: static builds by Martin Riedl) | 9.0.2 | GPL-3.0 | Video, audio and animation conversion | https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz · build scripts: https://git.martin-riedl.de/ffmpeg/build-script |
+| Lucide icons (font) | 1.59.0 | ISC | Icons on macOS | https://github.com/lucide-icons/lucide |
 | Python | 3.12 | PSF-2.0 | Runs the app | https://www.python.org/downloads/source/ |
 | Tcl/Tk | 8.6 | Tcl/Tk licence (BSD-style) | Window toolkit | https://www.tcl-lang.org/software/tcltk/ |
 | Pillow | 13.0.0 | MIT-CMU | Still images | https://github.com/python-pillow/Pillow |

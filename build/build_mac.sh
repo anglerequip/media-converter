@@ -80,7 +80,7 @@ SOURCE_DATE_EPOCH=$(git log -1 --format=%ct 2>/dev/null || date +%s); export SOU
 # ---------------------------------------------------------------- PyInstaller
 step "Building Media Converter.app"
 rm -rf dist build/work
-MC_FFMPEG_DIR="$FF_DIR" MC_VERSION="$VERSION" "$PY" -m PyInstaller --noconfirm --clean --log-level WARN \
+MC_FFMPEG_DIR="$PWD/$FF_DIR" MC_VERSION="$VERSION" "$PY" -m PyInstaller --noconfirm --clean --log-level WARN \
   --distpath dist --workpath build/work build/MediaConverter.spec
 APP="dist/Media Converter.app"
 [ -x "$APP/Contents/MacOS/MediaConverter" ] || fail "PyInstaller did not produce the app"

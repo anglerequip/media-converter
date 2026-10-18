@@ -2,8 +2,8 @@
 
 <h1 align="center">Media Converter</h1>
 
-<p align="center">Convert images, GIFs, videos and audio on Windows, and save videos and music from YouTube, TikTok, Spotify and other sites.<br>
-Free, open source and private: everything runs on your own PC.</p>
+<p align="center">Convert images, GIFs, videos and audio on Windows and Mac, and save videos and music from YouTube, TikTok, Spotify and other sites.<br>
+Free, open source and private: everything runs on your own computer.</p>
 
 <p align="center">
   <a href="https://github.com/anglerequip/media-converter/releases/latest/download/MediaConverter-Setup.exe">
@@ -12,8 +12,16 @@ Free, open source and private: everything runs on your own PC.</p>
       <img src="docs/download-light.svg" width="232" height="40" alt="Download for Windows">
     </picture>
   </a>
+  &nbsp;
+  <a href="https://github.com/anglerequip/media-converter/releases/latest/download/MediaConverter-mac-apple-silicon.dmg">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/download-mac-dark.svg">
+      <img src="docs/download-mac-light.svg" width="200" height="40" alt="Download for Mac">
+    </picture>
+  </a>
 </p>
-<p align="center"><sub>MediaConverter-Setup.exe &nbsp;·&nbsp; about 95 MB &nbsp;·&nbsp; Windows 10 and 11 &nbsp;·&nbsp; from <a href="https://github.com/anglerequip/media-converter/releases/latest">GitHub Releases</a>, where you'll also find the portable version</sub></p>
+<p align="center"><sub>Windows 10 and 11: <code>MediaConverter-Setup.exe</code>, about 95 MB &nbsp;·&nbsp; Mac with Apple silicon (M1 or newer), macOS 11 or later: <code>.dmg</code>
+<br>Intel Mac? <a href="https://github.com/anglerequip/media-converter/releases/latest/download/MediaConverter-mac-intel.dmg">Download the Intel version</a> &nbsp;·&nbsp; all files, the portable Windows version and release notes: <a href="https://github.com/anglerequip/media-converter/releases/latest">GitHub Releases</a></sub></p>
 
 <p align="center"><img src="docs/screenshot.png" width="760" alt="Media Converter after converting four files to MP4, with the format choices on the right"></p>
 
@@ -31,9 +39,17 @@ Free, open source and private: everything runs on your own PC.</p>
 
 ## Install
 
+**Windows**
+
 1. Click **Download for Windows** above and run `MediaConverter-Setup.exe`.
 2. If Windows shows *"Windows protected your PC"*, click **More info → Run anyway**. This appears because the app isn't signed with a paid certificate.
 3. Open **Media Converter** from the Start menu or the Desktop.
+
+**Mac**
+
+1. Click **Download for Mac** above. Not sure which Mac you have? Apple menu → **About This Mac**: "Chip: Apple M…" means Apple silicon, "Processor: Intel" means Intel.
+2. Open the downloaded `.dmg` and drag **Media Converter** into **Applications**.
+3. The first time you open it, macOS says it can't check the developer, because the app isn't registered with Apple (that costs $99 a year). Open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to Media Converter. On macOS 14 and older you can instead right-click the app and choose **Open**. After that it opens normally.
 
 The app never updates itself. For a newer version, download it again from this page; installing over the old one keeps your settings.
 
