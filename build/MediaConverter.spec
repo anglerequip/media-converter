@@ -2,6 +2,7 @@
 # Run through build\build.ps1 or build/build_mac.sh, not directly.
 # -*- mode: python ; coding: utf-8 -*-
 import os
+import platform
 import sys
 from pathlib import Path
 
@@ -15,7 +16,7 @@ binaries = []
 hiddenimports = []
 # Packages that carry data files, native libraries or lazily imported modules.
 for package in ("customtkinter", "tkinterdnd2", "pillow_heif", "curl_cffi", "yt_dlp", "yt_dlp_ejs"):
-    d, b, h = collect_all(package)
+    d, b, h = collect_all(package, include_py_files=False)  # the code itself is already compiled into the app
     datas += d
     binaries += b
     hiddenimports += h
@@ -33,8 +34,29 @@ a = Analysis(  # noqa: F821
     datas=datas,
     binaries=binaries,
     hiddenimports=hiddenimports,
-    excludes=["numpy", "matplotlib", "pandas", "scipy", "IPython", "PyQt5", "PyQt6", "PySide6", "tkinter.test"],
+    # sqlite3: only used by yt-dlp to read browser cookies, which this app never does (yt-dlp works without it).
+    excludes=["numpy", "matplotlib", "pandas", "scipy", "IPython", "PyQt5", "PyQt6", "PySide6", "tkinter.test", "sqlite3"],
 )
+
+# Leave out files this build can never use (about 4.5 MB and 700 files):
+#  - tkinterdnd2's drag-and-drop libraries for the other ten systems and CPUs
+#  - Tcl's time-zone database (the app never uses Tcl's clock command; Python handles dates)
+_arch = "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "x64"
+_dnd = ("osx-" if MAC else "win-") + _arch
+
+
+def _keep(dest: str) -> bool:
+    parts = dest.replace("\\", "/").split("/")
+    if parts[:2] == ["_tcl_data", "tzdata"]:
+        return False
+    if parts[:2] == ["tkinterdnd2", "tkdnd"] and len(parts) > 3:
+        return parts[2] in (_dnd, _dnd + "-tcl9")
+    return True
+
+
+a.datas = [entry for entry in a.datas if _keep(entry[0])]
+a.binaries = [entry for entry in a.binaries if _keep(entry[0])]
+
 pyz = PYZ(a.pure)  # noqa: F821
 exe = EXE(  # noqa: F821
     pyz,
