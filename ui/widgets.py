@@ -460,7 +460,7 @@ def kind_tile(kind: str | None) -> ctk.CTkImage:
     out = []
     for mode in (0, 1):
         tile = _tile_base(bg[mode])
-        glyph = T._render_glyph(T.GLYPHS[KIND_ICON[kind]], 60, fg[mode])
+        glyph = T._render_glyph(T._icon_source()[1][KIND_ICON[kind]], 60, fg[mode])
         tile.alpha_composite(glyph, ((TILE_PX - 60) // 2, (TILE_PX - 60) // 2))
         out.append(tile)
     return ctk.CTkImage(light_image=out[0], dark_image=out[1], size=(44, 44))

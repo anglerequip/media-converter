@@ -11,7 +11,7 @@ from pathlib import Path
 from tkinter import messagebox
 
 import customtkinter as ctk
-from PIL import Image
+from PIL import Image, ImageTk
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -27,7 +27,12 @@ from ui.download_view import DownloadView
 from ui.widgets import DetailsLoader, Segmented, Tooltip, fit_text, ghost_button
 
 APP_DIR = Path(__file__).resolve().parent
-SETTINGS_FILE = Path(os.environ.get("APPDATA", Path.home())) / "MediaConverter" / "settings.json"
+if sys.platform == "win32":
+    SETTINGS_FILE = Path(os.environ.get("APPDATA", Path.home())) / "MediaConverter" / "settings.json"
+elif sys.platform == "darwin":
+    SETTINGS_FILE = Path.home() / "Library" / "Application Support" / "MediaConverter" / "settings.json"
+else:
+    SETTINGS_FILE = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "MediaConverter" / "settings.json"
 REPO_URL = "https://github.com/anglerequip/media-converter"
 
 
@@ -70,7 +75,11 @@ class App(ctk.CTk):
         icon = APP_DIR / "assets" / "icon.ico"
         if icon.exists():
             try:
-                self.iconbitmap(str(icon))
+                if sys.platform == "win32":
+                    self.iconbitmap(str(icon))
+                else:
+                    self._icon_photo = ImageTk.PhotoImage(Image.open(APP_DIR / "assets" / "icon.png").resize((256, 256)))
+                    self.iconphoto(True, self._icon_photo)
             except Exception:
                 pass
 
@@ -135,7 +144,7 @@ class App(ctk.CTk):
 
         self.tabs = Segmented(
             head,
-            [("convert", "Convert Files", "Ctrl+1", "convert"), ("download", "Download from Link", "Ctrl+2", "link")],
+            [("convert", "Convert Files", f"{T.KEY}1", "convert"), ("download", "Download from Link", f"{T.KEY}2", "link")],
             command=self.show_view, height=40, font_size=13,
         )
         self.tabs.grid(row=0, column=2)
@@ -234,7 +243,10 @@ class App(ctk.CTk):
             elif path.exists():
                 os.startfile(path)  # noqa: S606
         else:
-            subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path if path.is_dir() else path.parent)])
+            if sys.platform == "darwin":
+                subprocess.Popen(["/usr/bin/open", "-R", str(path)] if path.is_file() else ["/usr/bin/open", str(path)])
+            else:
+                subprocess.Popen(["xdg-open", str(path if path.is_dir() else path.parent)])
 
     def send_to_convert(self, path: Path) -> None:
         self.show_view("convert")
@@ -290,11 +302,12 @@ class App(ctk.CTk):
     # ------------------------------------------------------------------ keyboard
 
     def _bind_keys(self) -> None:
-        self.bind("<Control-o>", lambda _e: (self.show_view("convert"), self.convert_view.choose_files()))
-        self.bind("<Control-Return>", lambda _e: self.convert_view.start() if self.tabs.get() == "convert" else self.download_view.start())
+        mod = "Command" if sys.platform == "darwin" else "Control"
+        self.bind(f"<{mod}-o>", lambda _e: (self.show_view("convert"), self.convert_view.choose_files()))
+        self.bind(f"<{mod}-Return>", lambda _e: self.convert_view.start() if self.tabs.get() == "convert" else self.download_view.start())
         self.bind("<Escape>", lambda _e: (self.convert_view.cancel(), self.download_view.cancel()))
-        self.bind("<Control-Key-1>", lambda _e: self.show_view("convert"))
-        self.bind("<Control-Key-2>", lambda _e: self.show_view("download"))
+        self.bind(f"<{mod}-Key-1>", lambda _e: self.show_view("convert"))
+        self.bind(f"<{mod}-Key-2>", lambda _e: self.show_view("download"))
 
     # ------------------------------------------------------------------ settings dialog
 
@@ -310,7 +323,8 @@ class App(ctk.CTk):
         M.window_fade_in(win, 160)
         ico = APP_DIR / "assets" / "icon.ico"
         if ico.exists():
-            win.after(250, lambda: win.iconbitmap(str(ico)))
+            if sys.platform == "win32":
+                win.after(250, lambda: win.iconbitmap(str(ico)))
         win.grid_columnconfigure(0, weight=1)
 
         def card(row: int, title: str) -> ctk.CTkFrame:

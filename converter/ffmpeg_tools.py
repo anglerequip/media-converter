@@ -51,6 +51,9 @@ def _candidate_dirs() -> list[str]:
             dirs.append(os.path.join(local, "Microsoft", "WinGet", "Links"))
             dirs += glob.glob(os.path.join(local, "Microsoft", "WinGet", "Packages", "*FFmpeg*", "*", "bin"))
         dirs += [r"C:\ffmpeg\bin", r"C:\Program Files\ffmpeg\bin"]
+    elif sys.platform == "darwin":
+        # Apps started from Finder don't see the shell's PATH, so look where Homebrew and MacPorts install.
+        dirs += ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"]
     # A copy placed next to the app (e.g. tools/ffmpeg.exe) also works.
     app_dir = Path(__file__).resolve().parent.parent
     dirs += [str(app_dir / "tools"), str(app_dir / "tools" / "bin")]

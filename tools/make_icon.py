@@ -67,10 +67,24 @@ def draw(size: int) -> Image.Image:
     return out
 
 
+ICNS_SIZES = [16, 32, 64, 128, 256, 512, 1024]
+
+
+def draw_mac(size: int) -> Image.Image:
+    """macOS app icons keep a transparent margin around the rounded square (about 10% per side in Apple's
+    template), so a full-bleed icon doesn't look oversized in the Dock and Finder."""
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    body = draw(max(16, round(size * 0.875)))
+    canvas.alpha_composite(body, ((size - body.width) // 2, (size - body.height) // 2))
+    return canvas
+
+
 if __name__ == "__main__":
     frames = {size: draw(size) for size in ICO_SIZES}
     big = frames[256]
     big.save(ROOT / "assets" / "icon.ico", sizes=[(s, s) for s in ICO_SIZES],
              append_images=[frames[s] for s in ICO_SIZES if s != 256])
     draw(512).save(ROOT / "assets" / "icon.png")
-    print("wrote assets/icon.ico (" + ", ".join(map(str, ICO_SIZES)) + " px) and assets/icon.png")
+    mac = {size: draw_mac(size) for size in ICNS_SIZES}
+    mac[1024].save(ROOT / "assets" / "icon.icns", append_images=[mac[s] for s in ICNS_SIZES if s != 1024])
+    print("wrote assets/icon.ico (" + ", ".join(map(str, ICO_SIZES)) + " px), assets/icon.icns and assets/icon.png")

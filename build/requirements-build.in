@@ -1,13 +1,13 @@
-﻿# Everything that goes into MediaConverter.exe, pinned for the release build.
-# build\requirements-lock.txt is generated from this file (exact versions + SHA-256 hashes):
+﻿# Everything that goes into the Windows and Mac apps, pinned for the release build.
+# build/requirements-lock.txt is generated from this file with uv (exact versions, SHA-256 hashes, and
+# per-platform markers, so the one file serves Windows and macOS):
 #
-#   python -m pip install pip-tools
-#   python -m piptools compile --pre --generate-hashes --allow-unsafe --strip-extras --no-header -o build\requirements-lock.txt build\requirements-build.in
+#   pip install uv==0.13.1
+#   uv pip compile build/requirements-build.in --universal --python-version 3.12 --prerelease=explicit --generate-hashes --no-header -o build/requirements-lock.txt
 #
-# --pre is needed because yt-dlp publishes its site fixes as nightly ".dev" releases on PyPI.
-#
+# --prerelease=explicit allows a pre-release only where one is pinned below: yt-dlp publishes its site fixes
+# as nightly ".dev" releases on PyPI. Everything else is a stable release.
 -r ../requirements.txt
 yt-dlp[default,curl-cffi]==2026.10.10.233141.dev0
 pyinstaller==6.22.3
-# Stable releases for everything else (--pre would otherwise pick betas):
 curl-cffi==0.16.3

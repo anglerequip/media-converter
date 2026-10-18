@@ -48,20 +48,43 @@ PAD = 16
 _FONT_CACHE: dict = {}
 
 
+IS_WINDOWS = sys.platform == "win32"
+IS_MAC = sys.platform == "darwin"
+KEY = "⌘" if IS_MAC else "Ctrl+"  # how keyboard shortcuts are written on this system
+
+
 def font(size: int = 12, weight: str = "normal") -> ctk.CTkFont:
-    """Segoe UI in three weights. "semibold" uses the real Semibold face rather than faux bold."""
+    """The system's interface font in three weights: Segoe UI on Windows (with its real Semibold face),
+    San Francisco on macOS, the toolkit default elsewhere."""
     key = (size, weight)
     if key not in _FONT_CACHE:
-        if weight == "semibold":
-            _FONT_CACHE[key] = ctk.CTkFont(family="Segoe UI Semibold", size=size)
+        if IS_WINDOWS:
+            if weight == "semibold":
+                _FONT_CACHE[key] = ctk.CTkFont(family="Segoe UI Semibold", size=size)
+            else:
+                _FONT_CACHE[key] = ctk.CTkFont(family="Segoe UI", size=size, weight="bold" if weight == "bold" else "normal")
         else:
-            _FONT_CACHE[key] = ctk.CTkFont(family="Segoe UI", size=size, weight="bold" if weight == "bold" else "normal")
+            family = ".AppleSystemUIFont" if IS_MAC else "TkDefaultFont"
+            # macOS draws text at 72 dpi where Windows uses 96, so the same point size looks smaller there.
+            _FONT_CACHE[key] = ctk.CTkFont(family=family, size=size + (1 if IS_MAC else 0),
+                                           weight="normal" if weight == "normal" else "bold")
     return _FONT_CACHE[key]
 
 
 # ----------------------------------------------------------------------------- icons
-# Glyphs from Windows' own icon font (Segoe Fluent Icons on Windows 11, MDL2 Assets on Windows 10),
-# rendered to images so they can sit inside buttons next to text and follow the theme.
+# On Windows: glyphs from Windows' own icon font (Segoe Fluent Icons on Windows 11, MDL2 Assets on Windows 10).
+# Elsewhere, or if that font is missing: the bundled Lucide icon font (assets/fonts, ISC licence).
+# Either way they are rendered to images so they can sit inside buttons next to text and follow the theme.
+
+LUCIDE_FONT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "fonts", "lucide.ttf")
+LUCIDE_GLYPHS = {
+    "upload": "", "download": "", "folder": "", "folder_open": "", "settings": "",
+    "close": "", "delete": "", "photo": "", "video": "", "audio": "", "check": "",
+    "check_circle": "", "error": "", "error_circle": "", "warning": "", "link": "",
+    "paste": "", "refresh": "", "play": "", "chevron_down": "", "chevron_up": "",
+    "info": "", "gif": "", "sun": "", "moon": "", "pc": "", "convert": "",
+    "add": "", "stop": "", "doc": "", "skip": "",
+}
 
 GLYPHS = {
     "upload": "\ue898", "download": "\ue896", "folder": "\ue8b7", "folder_open": "\ue838",
@@ -81,19 +104,23 @@ _ICON_FONTS = [
 
 
 @lru_cache(maxsize=None)
-def _icon_font_path() -> str | None:
-    for path in _ICON_FONTS:
-        if os.path.isfile(path):
-            return path
-    return None
+def _icon_source() -> tuple[str | None, dict]:
+    """(font file, name -> character) for this computer."""
+    if IS_WINDOWS:
+        for path in _ICON_FONTS:
+            if os.path.isfile(path):
+                return path, GLYPHS
+    if os.path.isfile(LUCIDE_FONT):
+        return LUCIDE_FONT, LUCIDE_GLYPHS
+    return None, GLYPHS
 
 
 def _render_glyph(char: str, px: int, colour: str) -> Image.Image:
     img = Image.new("RGBA", (px, px), (0, 0, 0, 0))
-    path = _icon_font_path()
+    path, _ = _icon_source()
     draw = ImageDraw.Draw(img)
     if path:
-        f = ImageFont.truetype(path, int(px * 0.92))
+        f = ImageFont.truetype(path, int(px * (0.82 if path == LUCIDE_FONT else 0.92)))
         box = draw.textbbox((0, 0), char, font=f)
         x = (px - (box[2] - box[0])) / 2 - box[0]
         y = (px - (box[3] - box[1])) / 2 - box[1]
@@ -107,7 +134,7 @@ def _render_glyph(char: str, px: int, colour: str) -> Image.Image:
 @lru_cache(maxsize=None)
 def icon(name: str, size: int = 16, colour: tuple[str, str] = TEXT) -> ctk.CTkImage:
     """A theme-aware icon image. Rendered at 3x and scaled down so it stays crisp at any DPI."""
-    char = GLYPHS[name]
+    char = _icon_source()[1][name]
     light = _render_glyph(char, size * 3, colour[0])
     dark = _render_glyph(char, size * 3, colour[1])
     return ctk.CTkImage(light_image=light, dark_image=dark, size=(size, size))

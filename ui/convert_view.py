@@ -768,7 +768,7 @@ class ConvertView(ctk.CTkFrame):
         self.clear_btn.grid() if self.cards else self.clear_btn.grid_remove()
         reason = ""
         if not self.cards:
-            title, detail, reason = "No files yet", "Add files to get started. Drag them in or press Ctrl+O.", "Add files first"
+            title, detail, reason = "No files yet", f"Add files to get started. Drag them in or press {T.KEY}O.", "Add files first"
         elif not cards:
             title, detail, reason = "Nothing to convert", "None of these file types are supported.", "No supported files"
         elif not t:
