@@ -21,6 +21,7 @@ except ImportError:  # drag and drop is optional; the buttons always work
 
 from converter import __version__
 from converter.ffmpeg_tools import find_tool
+from ui import motion as M
 from ui import theme as T
 from ui.convert_view import ConvertView
 from ui.download_view import DownloadView
@@ -52,6 +53,9 @@ class App(ctk.CTk):
         super().__init__(fg_color=T.BG)
         self.settings = load_settings()
         ctk.set_appearance_mode(self.settings.get("appearance", "System"))
+        self.system_motion = M.system_allows_animation()
+        M.set_enabled(self.settings.get("animations", True) and self.system_motion)
+        M.window_fade_in(self)
 
         self.dnd = False
         if TkinterDnD is not None:
@@ -81,8 +85,7 @@ class App(ctk.CTk):
         self._build_header()
         body = ctk.CTkFrame(self, fg_color=T.BG)
         body.grid(row=1, column=0, sticky="nsew", padx=20, pady=(4, 20))
-        body.grid_columnconfigure(0, weight=1)
-        body.grid_rowconfigure(0, weight=1)
+        self.current_view: str | None = None
         self.convert_view = ConvertView(body, self)
         self.download_view = DownloadView(body, self)
         self.views = {"convert": self.convert_view, "download": self.download_view}
@@ -158,11 +161,18 @@ class App(ctk.CTk):
     def show_view(self, name: str) -> None:
         if name not in ("convert", "download"):
             name = "convert"
+        previous, self.current_view = self.current_view, name
         for key, view in self.views.items():
-            if key == name:
-                view.grid(row=0, column=0, sticky="nsew")
-            else:
-                view.grid_remove()
+            if key != name:
+                M.cancel(view, "slide")
+                view.place_forget()
+        view = self.views[name]
+        if previous is None or previous == name:
+            view.place(x=0, y=0, relwidth=1, relheight=1)
+        else:
+            # Glide in from the side the tab sits on.
+            M.slide_in(view, dx=36 if name == "download" else -36, y=0, relwidth=1, relheight=1)
+        view.lift()
         self.tabs.set(name)
         self.settings["view"] = name
         if name == "download":
@@ -261,11 +271,21 @@ class App(ctk.CTk):
                              "warning": (T.WARNING, "warning"), "error": (T.ERROR, "error_circle")}[tone]
         self.toast_icon.configure(image=T.icon(icon_name, 16, colour))
         self.toast_text.configure(text=text)
-        self.toast_frame.place(relx=0.5, rely=1.0, y=-24, anchor="s")
         self.toast_frame.lift()
         if self._toast_job:
             self.after_cancel(self._toast_job)
-        self._toast_job = self.after(ms, self.toast_frame.place_forget)
+
+        def place(t: float) -> None:
+            self.toast_frame.place(relx=0.5, rely=1.0, y=round(-24 + 60 * (1 - t)), anchor="s")
+
+        M.animate(self.toast_frame, "slide", M.SLOW, place)
+        self._toast_job = self.after(ms, self._hide_toast)
+
+    def _hide_toast(self) -> None:
+        def place(t: float) -> None:
+            self.toast_frame.place(relx=0.5, rely=1.0, y=round(-24 + 80 * t), anchor="s")
+
+        M.animate(self.toast_frame, "slide", M.NORMAL, place, done=self.toast_frame.place_forget, ease=M.ease_in_out)
 
     # ------------------------------------------------------------------ keyboard
 
@@ -284,9 +304,10 @@ class App(ctk.CTk):
             return
         win = self._settings_win = ctk.CTkToplevel(self, fg_color=T.BG)
         win.title("Settings")
-        win.geometry(f"460x580+{self.winfo_rootx() + self.winfo_width() - 500}+{self.winfo_rooty() + 70}")
+        win.geometry(f"460x640+{self.winfo_rootx() + self.winfo_width() - 500}+{self.winfo_rooty() + 70}")
         win.resizable(False, False)
         win.transient(self)
+        M.window_fade_in(win, 160)
         ico = APP_DIR / "assets" / "icon.ico"
         if ico.exists():
             win.after(250, lambda: win.iconbitmap(str(ico)))
@@ -309,7 +330,32 @@ class App(ctk.CTk):
         theme = Segmented(c, [("System", "System", None, "pc"), ("Light", "Light", None, "sun"), ("Dark", "Dark", None, "moon")],
                           command=lambda v: (self.set_theme(v), self.theme_switch.set(v)),
                           value=self.settings.get("appearance", "System"))
-        theme.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 16))
+        theme.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 12))
+        anim = ctk.CTkSwitch(c, text="Animations", font=T.font(12, "semibold"), text_color=T.TEXT,
+                             progress_color=T.ACCENT, button_color=("#FFFFFF", "#F1F3F6"),
+                             button_hover_color=("#FFFFFF", "#FFFFFF"), fg_color=T.BORDER_STRONG,
+                             switch_width=38, switch_height=20)
+        if self.settings.get("animations", True):
+            anim.select()
+        anim.grid(row=2, column=0, sticky="w", padx=16)
+        anim_note = note(c, "", row=3)
+
+        def describe_motion() -> None:
+            if not self.system_motion:
+                anim_note.configure(text="Windows' 'Animation effects' setting is off, so the app stays still too.",
+                                    text_color=T.MUTED)
+            else:
+                anim_note.configure(text="Smooth fades and slides. Turn off for a completely still interface.",
+                                    text_color=T.MUTED)
+
+        def toggle_motion() -> None:
+            self.settings["animations"] = bool(anim.get())
+            M.set_enabled(self.settings["animations"] and self.system_motion)
+            describe_motion()
+
+        anim.configure(command=toggle_motion)
+        describe_motion()
+        anim_note.grid_configure(pady=(4, 14))
 
         c = card(1, "Video downloader")
         try:

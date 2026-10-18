@@ -13,6 +13,7 @@ import customtkinter as ctk
 from converter.downloader import download
 from converter.ffmpeg_tools import Cancelled, ConversionError
 
+from . import motion as M
 from . import theme as T
 from .convert_view import help_text, section_title, switch
 from .widgets import (
@@ -424,3 +425,9 @@ class DownloadView(ctk.CTkFrame):
         Tooltip(folder, "Show in folder")
         self.hist_rows += 1
         self.hist_count.configure(text=str(self.hist_rows))
+        if M.enabled():
+            height = M.natural_height(row)
+            M.collapse_now(row)
+            row.configure(fg_color=T.ACCENT_SOFT)
+            M.expand(row, height)
+            M.fade(row, 800, key="flash", fg_color=T.SURFACE_ALT)

@@ -13,6 +13,7 @@ from typing import Callable
 import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageOps
 
+from . import motion as M
 from . import theme as T
 
 # ----------------------------------------------------------------------------- small helpers
@@ -110,15 +111,16 @@ def primary_button(parent, text: str, command=None, icon_name: str | None = None
         image=T.icon(icon_name, 16, T.ON_ACCENT) if icon_name else None, compound="left", border_spacing=8, **kw,
     )
     make_focusable(b, ring=("#1D4F86", "#BFDDFB"))
+    M.smooth_hover(b, T.ACCENT_HOVER)
     return b
 
 
 def set_primary_enabled(button: ctk.CTkButton, enabled: bool) -> None:
     """CTk keeps the normal colour on disabled buttons; give primary buttons a clearly inactive look."""
     button._mc_enabled = enabled  # handlers check this; Tk's real "disabled" state turns icons into grey boxes
-    button.configure(fg_color=T.ACCENT if enabled else T.ACCENT_DISABLED,
-                     hover_color=T.ACCENT_HOVER if enabled else T.ACCENT_DISABLED,
-                     cursor="hand2" if enabled else "arrow")
+    M.paint(button, fg_color=T.ACCENT if enabled else T.ACCENT_DISABLED,
+            hover_color=T.ACCENT_HOVER if enabled else T.ACCENT_DISABLED,
+            cursor="hand2" if enabled else "arrow")
 
 
 def secondary_button(parent, text: str, command=None, icon_name: str | None = None, height: int = 34, **kw) -> ctk.CTkButton:
@@ -129,6 +131,7 @@ def secondary_button(parent, text: str, command=None, icon_name: str | None = No
         image=T.icon(icon_name, 15, T.TEXT) if icon_name else None, compound="left", border_spacing=6, **kw,
     )
     make_focusable(b)
+    M.smooth_hover(b, T.SURFACE_HOVER)
     return b
 
 
@@ -142,6 +145,7 @@ def ghost_button(parent, text: str = "", command=None, icon_name: str | None = N
         border_spacing=4 if text else 0, **kw,
     )
     make_focusable(b)
+    M.smooth_hover(b, T.SURFACE_HOVER)
     return b
 
 
@@ -213,8 +217,8 @@ class Segmented(ctk.CTkFrame):
         self.value: str | None = None
         for i, (val, label, tip, icon_name) in enumerate(options):
             b = ctk.CTkButton(
-                self, text=label, height=height - 6, corner_radius=T.RADIUS_SMALL, border_width=0,
-                fg_color="transparent", hover_color=T.SURFACE_HOVER, text_color=T.MUTED,
+                self, text=label, height=height - 6, corner_radius=T.RADIUS_SMALL, border_width=1,
+                fg_color=T.SURFACE_ALT, border_color=T.SURFACE_ALT, text_color=T.MUTED,
                 font=T.font(font_size, "semibold"), compound="left", border_spacing=6,
                 width=0 if label else height - 6,
                 command=lambda v=val: self.set(v, notify=True),
@@ -223,6 +227,7 @@ class Segmented(ctk.CTkFrame):
             if equal:
                 self.grid_columnconfigure(i, weight=1, uniform="seg")
             make_focusable(b)
+            M.smooth_hover(b, T.SURFACE_HOVER)
             if tip:
                 Tooltip(b, tip)
             self.buttons[val] = b
@@ -232,16 +237,17 @@ class Segmented(ctk.CTkFrame):
     def set(self, value: str, notify: bool = False) -> None:
         if value not in self.buttons:
             return
+        first = self.value is None
         self.value = value
         for val, b in self.buttons.items():
             active = val == value
             icon_name = self.icons[val]
-            b.configure(
-                fg_color=T.SURFACE if active else "transparent",
+            M.paint(
+                b, duration=0 if first else M.NORMAL,
+                fg_color=T.SURFACE if active else T.SURFACE_ALT,
                 hover_color=T.SURFACE if active else T.SURFACE_HOVER,
                 text_color=T.TEXT if active else T.MUTED,
-                border_width=1 if active else 0,
-                border_color=T.BORDER_STRONG,
+                border_color=T.BORDER_STRONG if active else T.SURFACE_ALT,
                 image=T.icon(icon_name, 15, T.ACCENT_TEXT if active else T.MUTED) if icon_name else None,
             )
         if notify and self.command:
@@ -257,18 +263,20 @@ class Segmented(ctk.CTkFrame):
 def chip(parent, text: str, command, selected: bool = False, recommended: bool = False) -> ctk.CTkButton:
     b = ctk.CTkButton(parent, text=text, command=command, height=30, width=62, corner_radius=T.RADIUS_SMALL,
                       font=T.font(12, "semibold"), border_width=1)
-    style_chip(b, selected, recommended)
+    style_chip(b, selected, recommended, animate=False)
     make_focusable(b)
+    M.smooth_hover(b, T.ACCENT_HOVER if selected else T.ACCENT_SOFT)
     return b
 
 
-def style_chip(b: ctk.CTkButton, selected: bool, recommended: bool = False) -> None:
+def style_chip(b: ctk.CTkButton, selected: bool, recommended: bool = False, animate: bool = True) -> None:
+    d = M.NORMAL if animate else 0
     if selected:
-        b.configure(fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER, text_color=T.ON_ACCENT, border_color=T.ACCENT)
+        M.paint(b, d, fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER, text_color=T.ON_ACCENT, border_color=T.ACCENT)
     else:
-        b.configure(fg_color=T.SURFACE, hover_color=T.ACCENT_SOFT,
-                    text_color=T.ACCENT_TEXT if recommended else T.TEXT,
-                    border_color=T.ACCENT if recommended else T.BORDER_STRONG)
+        M.paint(b, d, fg_color=T.SURFACE, hover_color=T.ACCENT_SOFT,
+                text_color=T.ACCENT_TEXT if recommended else T.TEXT,
+                border_color=T.ACCENT if recommended else T.BORDER_STRONG)
 
 
 # ----------------------------------------------------------------------------- smooth progress bar
@@ -289,6 +297,9 @@ class SmoothProgress(ctk.CTkProgressBar):
         super().set(0)
 
     def glide(self, value: float) -> None:
+        if not M.enabled():
+            self.jump(max(0.0, min(1.0, value)))
+            return
         self._target = max(0.0, min(1.0, value))
         if value < self._value:  # going backwards (a new job): jump
             self._value = self._target
@@ -647,7 +658,9 @@ class FileCard(ctk.CTkFrame):
         label, fg, bg = STATUS_STYLE[state]
         if state == "working" and fraction is not None:
             label = f"{label} {fraction * 100:.0f}%"
-        self.status.configure(text=f"  ●  {label}  ", text_color=fg, fg_color=bg)
+        self.status.configure(text=f"  ●  {label}  ")
+        M.fade(self.status, M.NORMAL if getattr(self, "_shown", False) else 0, text_color=fg, fg_color=bg)
+        self._shown = True
         self.status.configure(cursor="hand2" if state in ("failed", "done") else "")
         if state == "working":
             self.spacer.grid_remove()

@@ -15,6 +15,7 @@ from converter.formats import (
     AUDIO_IN, GROUP_ORDER, IMAGE_IN, VIDEO_IN, group_of, kind_of, recommended_for, targets_for,
 )
 
+from . import motion as M
 from . import theme as T
 from .widgets import (
     DashedPanel, FileCard, Segmented, SmoothProgress, Tooltip, chip, fit_text, ghost_button, human_size,
@@ -168,8 +169,8 @@ class DropZone(DashedPanel):
         fill = T.ACCENT_SOFT if hover else T.SURFACE
         self.full.configure(fg_color=fill)
         self.slim.configure(fg_color=fill)
-        self.full_icon.configure(fg_color=T.SURFACE if hover else T.ACCENT_SOFT)
-        self.slim_icon.configure(fg_color=T.SURFACE if hover else T.ACCENT_SOFT)
+        M.fade(self.full_icon, M.FAST, fg_color=T.SURFACE if hover else T.ACCENT_SOFT)
+        M.fade(self.slim_icon, M.FAST, fg_color=T.SURFACE if hover else T.ACCENT_SOFT)
         self.set_colours(fill, T.ACCENT if hover else T.BORDER_STRONG)
 
 
@@ -394,17 +395,25 @@ class ConvertView(ctk.CTkFrame):
         self.s[key] = value
         self.refresh()
 
-    def _show_advanced(self, show: bool) -> None:
+    def _show_advanced(self, show: bool, animate: bool = False) -> None:
         self.s["advanced_open"] = show
         self.adv_toggle.configure(image=T.icon("chevron_up" if show else "chevron_down", 14, T.MUTED))
         if show:
-            self.adv_body.grid(row=1, column=0, sticky="ew", padx=(4, 0))
+            if animate and M.enabled():
+                target = M.natural_height(self.adv_body)
+                M.collapse_now(self.adv_body)
+                self.adv_body.grid(row=1, column=0, sticky="ew", padx=(4, 0))
+                M.expand(self.adv_body, target, done=lambda: self.settings_panel._parent_canvas.yview_moveto(1.0))
+            else:
+                self.adv_body.grid(row=1, column=0, sticky="ew", padx=(4, 0))
+        elif animate and self.adv_body.winfo_ismapped():
+            M.collapse(self.adv_body, done=self.adv_body.grid_remove)
         else:
             self.adv_body.grid_remove()
 
     def toggle_advanced(self) -> None:
-        self._show_advanced(not self.s.get("advanced_open", False))
-        if self.s["advanced_open"]:
+        self._show_advanced(not self.s.get("advanced_open", False), animate=True)
+        if self.s["advanced_open"] and not M.enabled():
             self.after(50, lambda: self.settings_panel._parent_canvas.yview_moveto(1.0))
 
     def _on_save_mode(self, mode: str) -> None:
@@ -469,7 +478,7 @@ class ConvertView(ctk.CTkFrame):
             elif p.is_file():
                 files.append(p)
         known = {c.path.resolve() for c in self.cards}
-        added = 0
+        new_cards: list[FileCard] = []
         for f in files:
             if f.resolve() in known:
                 continue
@@ -479,31 +488,62 @@ class ConvertView(ctk.CTkFrame):
             self.app.register_drop(card)
             if card.kind:
                 self.app.details.request(f, card.kind, card.set_details)
-            added += 1
-        if added:
+            new_cards.append(card)
+        # Animate only small batches; a folder of hundreds of files should just appear.
+        animated = new_cards[:8] if M.enabled() and len(new_cards) <= 12 else []
+        targets = {}
+        for card in animated:
+            targets[card] = M.natural_height(card)
+            M.collapse_now(card)
+            card.configure(fg_color=T.ACCENT_SOFT, border_color=T.ACCENT)
+        if new_cards:
             self.hide_banner()
         self.layout_cards()
         self.refresh()
-        return added
+        for i, card in enumerate(animated):
+            self.after(i * 45, lambda c=card: self._reveal_card(c, targets[c]))
+        return len(new_cards)
+
+    def _reveal_card(self, card: FileCard, height: int) -> None:
+        if not card.winfo_exists():
+            return
+        M.expand(card, height, duration=M.SLOW)
+        M.fade(card, 700, key="flash", fg_color=T.SURFACE, border_color=T.BORDER)
 
     def remove(self, card: FileCard) -> None:
-        if self.busy:
+        if self.busy or card not in self.cards:
             return
-        card.destroy()
         self.cards.remove(card)
-        self.layout_cards()
         self.refresh()
+
+        def gone() -> None:
+            card.destroy()
+            self.layout_cards()
+
+        if M.enabled():
+            M.collapse(card, done=gone)
+        else:
+            gone()
 
     def clear(self) -> None:
         if self.busy:
             return
-        for c in self.cards:
-            c.destroy()
-        self.cards.clear()
+        leaving, self.cards = self.cards, []
         self.hide_banner()
         self.total.jump(0)
-        self.layout_cards()
         self.refresh()
+
+        def gone() -> None:
+            for c in leaving:
+                c.destroy()
+            self.layout_cards()
+
+        if M.enabled() and 0 < len(leaving) <= 20:
+            for c in leaving:
+                M.collapse(c, duration=M.NORMAL)
+            self.after(M.NORMAL + 40, gone)
+        else:
+            gone()
 
     def convert_more(self) -> None:
         self.clear()
@@ -900,12 +940,25 @@ class ConvertView(ctk.CTkFrame):
         self.banner_title.configure(text=title, text_color=T.TEXT)
         self.banner_detail.configure(text=detail)
         for b in (self.banner_open, self.banner_more):
-            b.configure(fg_color=T.SURFACE)
+            M.paint(b, 0, fg_color=T.SURFACE)
         self.banner_open.grid() if self.last_output else self.banner_open.grid_remove()
-        self.banner.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        if self.banner.winfo_ismapped():  # possibly mid-collapse: stop that and show it fully
+            M.cancel(self.banner, "height")
+            self.banner.grid_propagate(True)
+            return
+        if M.enabled():
+            target = M.natural_height(self.banner)
+            M.collapse_now(self.banner)
+            self.banner.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+            M.expand(self.banner, target)
+        else:
+            self.banner.grid(row=0, column=0, sticky="ew", pady=(0, 12))
 
     def hide_banner(self) -> None:
-        self.banner.grid_remove()
+        if self.banner.winfo_ismapped() and M.enabled():
+            M.collapse(self.banner, duration=M.NORMAL, done=self.banner.grid_remove)
+        else:
+            self.banner.grid_remove()
 
     def open_output(self) -> None:
         if self.last_output:

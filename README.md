@@ -30,6 +30,8 @@ The **Download from Link** tab checks a link as you type and tells you whether t
 
 The window follows the Windows light or dark theme, or you can pick one in the top-right corner. All settings are remembered between sessions.
 
+Interactions are animated with short, restrained transitions: buttons and selections fade, new files slide into the list, panels open and close smoothly, and the two screens glide in when you switch. Animations follow Windows' "Animation effects" setting and can be turned off in Settings.
+
 ## Quality
 
 The default is **Maximum**. The settings panel explains each level in plain words and shows the exact technical setting underneath.
@@ -103,7 +105,7 @@ This creates sample images, animations, video and audio, converts each to every 
 - `converter/formats.py`: which formats are read, and what each kind of file can become.
 - `converter/engine.py`: still images go through Pillow; video, audio and animations through FFmpeg. Animated GIF/WebP frames are decoded by Pillow (correct frame disposal and per-frame timing) and passed to FFmpeg.
 - `converter/downloader.py`: link downloads through yt-dlp.
-- `app.py` and `ui/`: the window, built with CustomTkinter. `ui/theme.py` holds the colours, type and icons (Windows' own Segoe Fluent Icons); `ui/widgets.py` the shared components; `convert_view.py` and `download_view.py` the two screens. Drag and drop uses tkinterdnd2.
+- `app.py` and `ui/`: the window, built with CustomTkinter. `ui/theme.py` holds the colours, type and icons (Windows' own Segoe Fluent Icons); `ui/motion.py` the animations; `ui/widgets.py` the shared components; `convert_view.py` and `download_view.py` the two screens. Drag and drop uses tkinterdnd2.
 
 ## License
 
