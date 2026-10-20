@@ -19,10 +19,12 @@ Set-Location $root
 
 # ---------------------------------------------------------------- pinned inputs
 $PythonVersion = "3.12"   # major.minor; CI uses 3.12.10
+# FFmpeg built by this project from pinned sources: build/ffmpeg/build-ffmpeg.sh, run by .github/workflows/ffmpeg.yml.
 $FFmpeg = @{
-    Version = "9.0.2"
-    Url     = "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-full_build-shared.zip"
-    Sha256  = "8d31e162f1616e37aab3fa2db991b97e1b8dbeb1c8465fd81a81be16ff91b328"
+    Version = "9.0.2-mc1"
+    Url     = "https://github.com/anglerequip/media-converter/releases/download/ffmpeg-9.0.2-mc1/ffmpeg-9.0.2-mc1-windows-x64.zip"
+    Sha256  = "f074500fdaf958f34d73a37b27b3bf2ceafbfac8c882a393ab8a86a3a042d06d"
+    Source  = "https://github.com/anglerequip/media-converter/releases/tag/ffmpeg-9.0.2-mc1"
 }
 $InnoSetup = @{
     Version = "6.7.3"
@@ -93,6 +95,9 @@ Write-Host "Version $version from commit $commit$dirty"
 
 # Same input, same output: fixed hash seed and file times taken from the commit.
 $env:PYTHONHASHSEED = "0"
+# Store the Python code archive inside the .exe uncompressed: the installer's LZMA then compresses it far better than
+# zlib could (download 47.7 -> 43.1 MB), at the cost of 14 MB more on disk; loading it also skips decompression.
+$env:PYINSTALLER_ZLIB_COMPRESSION_LEVEL = "0"
 $epoch = (git log -1 --format=%ct 2>$null)
 if ($epoch) { $env:SOURCE_DATE_EPOCH = $epoch }
 
@@ -125,13 +130,15 @@ if ($LASTEXITCODE -or -not (Test-Path "dist\MediaConverter\MediaConverter.exe"))
 # ---------------------------------------------------------------- FFmpeg + licences
 Step "Adding FFmpeg"
 $ff = New-Item -ItemType Directory -Force "dist\MediaConverter\ffmpeg"
-Copy-Item "$ffDir\bin\*.dll", "$ffDir\bin\ffmpeg.exe", "$ffDir\bin\ffprobe.exe" $ff
-Copy-Item "$ffDir\LICENSE" "$ff\LICENSE.txt"
+Copy-Item "$ffDir\bin\ffmpeg.exe", "$ffDir\bin\ffprobe.exe", "$ffDir\LICENSE.txt", "$ffDir\BUILD-INFO.txt" $ff
+Copy-Item -Recurse "$ffDir\licenses" $ff
 @"
-FFmpeg $($FFmpeg.Version) is included as separate programs (ffmpeg.exe, ffprobe.exe and their DLLs) under the GNU GPL v3; see LICENSE.txt.
-Binary build: $($FFmpeg.Url)
+FFmpeg $($FFmpeg.Version) is included as separate programs (ffmpeg.exe, ffprobe.exe) under the GNU GPL v3; see LICENSE.txt,
+and the licenses folder for the libraries built into it. BUILD-INFO.txt lists every source and its checksum.
+Built by build/ffmpeg/build-ffmpeg.sh in https://github.com/anglerequip/media-converter
+Download: $($FFmpeg.Url)
 SHA-256 of that download: $($FFmpeg.Sha256)
-Source code: https://ffmpeg.org/releases/ffmpeg-$($FFmpeg.Version).tar.xz and the build scripts at https://github.com/GyanD/codexffmpeg
+Complete source code: the ffmpeg-$($FFmpeg.Version)-sources.tar.gz file at $($FFmpeg.Source)
 "@ | Set-Content -Encoding utf8 "$ff\README.txt"
 Copy-Item "LICENSE" "dist\MediaConverter\LICENSE.txt"
 Copy-Item "THIRD-PARTY-NOTICES.md" "dist\MediaConverter\THIRD-PARTY-NOTICES.md"

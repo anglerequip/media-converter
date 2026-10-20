@@ -15,18 +15,18 @@ cd "$(dirname "$0")/.."
 
 # ---------------------------------------------------------------- pinned inputs
 PYTHON_VERSION="3.12"
-FFMPEG_VERSION="9.0.2"   # static builds by Martin Riedl, https://ffmpeg.martin-riedl.de (GPL)
+# FFmpeg built by this project from pinned sources: build/ffmpeg/build-ffmpeg.sh, run by .github/workflows/ffmpeg.yml.
+FFMPEG_VERSION="9.0.2-mc1"
+FF_RELEASE="https://github.com/anglerequip/media-converter/releases/download/ffmpeg-$FFMPEG_VERSION"
 case "$(uname -m)" in
   arm64)
     ARCH_NAME="apple-silicon"
-    FF_BASE="https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2"
-    FFMPEG_SHA="c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924"
-    FFPROBE_SHA="fcbe839537485eaee7a7a8bc5cbc0f90d53617e80943e8a5b2e31cb851197ea6" ;;
+    FF_ZIP="ffmpeg-$FFMPEG_VERSION-macos-arm64.zip"
+    FF_SHA="4184a57abce56c570e1edf34e9e3053ccd96812d91f9e5ab9057a158487c57c7" ;;
   x86_64)
     ARCH_NAME="intel"
-    FF_BASE="https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2"
-    FFMPEG_SHA="7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4"
-    FFPROBE_SHA="2322438ed2f6319a691291b247d09c69dcaa3a982460d1f269a7e1af335cfdfd" ;;
+    FF_ZIP="ffmpeg-$FFMPEG_VERSION-macos-x64.zip"
+    FF_SHA="d226553335e6ef1682f039149aa544bf003a1c48b3b56cc4ddc6a78d4d779b5c" ;;
   *) echo "BUILD FAILED: unsupported Mac architecture $(uname -m)"; exit 1 ;;
 esac
 
@@ -49,19 +49,23 @@ case "$PY_FOUND" in "$PYTHON_VERSION".*) echo "Python $PY_FOUND" ;; *) fail "Pyt
 step "Fetching pinned FFmpeg $FFMPEG_VERSION ($ARCH_NAME)"
 mkdir -p build/cache
 FF_DIR="build/cache/ffmpeg-mac-$ARCH_NAME-$FFMPEG_VERSION"
-fetch_pinned "$FF_BASE/ffmpeg.zip" "$FFMPEG_SHA" "build/cache/ffmpeg-mac-$ARCH_NAME.zip"
-fetch_pinned "$FF_BASE/ffprobe.zip" "$FFPROBE_SHA" "build/cache/ffprobe-mac-$ARCH_NAME.zip"
-rm -rf "$FF_DIR" && mkdir -p "$FF_DIR"
-unzip -q -o "build/cache/ffmpeg-mac-$ARCH_NAME.zip" ffmpeg -d "$FF_DIR"
-unzip -q -o "build/cache/ffprobe-mac-$ARCH_NAME.zip" ffprobe -d "$FF_DIR"
+fetch_pinned "$FF_RELEASE/$FF_ZIP" "$FF_SHA" "build/cache/$FF_ZIP"
+rm -rf "$FF_DIR" "build/cache/ffmpeg-unzip" && mkdir -p "$FF_DIR" "build/cache/ffmpeg-unzip"
+unzip -q -o "build/cache/$FF_ZIP" -d "build/cache/ffmpeg-unzip"
+FF_SRC=$(find build/cache/ffmpeg-unzip -mindepth 1 -maxdepth 1 -type d | head -1)
+cp "$FF_SRC/bin/ffmpeg" "$FF_SRC/bin/ffprobe" "$FF_SRC/LICENSE.txt" "$FF_SRC/BUILD-INFO.txt" "$FF_DIR/"
+cp -R "$FF_SRC/licenses" "$FF_DIR/"
+rm -rf "build/cache/ffmpeg-unzip"
 chmod +x "$FF_DIR/ffmpeg" "$FF_DIR/ffprobe"
 xattr -c "$FF_DIR/ffmpeg" "$FF_DIR/ffprobe" 2>/dev/null || true
 "$FF_DIR/ffmpeg" -hide_banner -version | head -1
 cat > "$FF_DIR/README.txt" <<EOF
-FFmpeg $FFMPEG_VERSION is included as separate programs (ffmpeg, ffprobe) under the GNU GPL v3.
-Binary build (static, $ARCH_NAME): $FF_BASE/ffmpeg.zip and ffprobe.zip by Martin Riedl, https://ffmpeg.martin-riedl.de
-SHA-256 of those downloads: ffmpeg.zip $FFMPEG_SHA, ffprobe.zip $FFPROBE_SHA
-Source code: https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz and the build scripts at https://git.martin-riedl.de/ffmpeg/build-script
+FFmpeg $FFMPEG_VERSION is included as separate programs (ffmpeg, ffprobe) under the GNU GPL v3; see FFMPEG-LICENSE.txt,
+and FFMPEG-LICENSES for the libraries built into it. FFMPEG-BUILD-INFO.txt lists every source and its checksum.
+Built by build/ffmpeg/build-ffmpeg.sh in https://github.com/anglerequip/media-converter
+Download: $FF_RELEASE/$FF_ZIP
+SHA-256 of that download: $FF_SHA
+Complete source code: the ffmpeg-$FFMPEG_VERSION-sources.tar.gz file at https://github.com/anglerequip/media-converter/releases/tag/ffmpeg-$FFMPEG_VERSION
 EOF
 
 # ---------------------------------------------------------------- clean Python environment
@@ -75,6 +79,8 @@ COMMIT=$(git rev-parse HEAD 2>/dev/null || echo unknown)
 DIRTY=$([ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ] && echo " (with uncommitted changes)" || true)
 echo "Version $VERSION from commit $COMMIT$DIRTY"
 export PYTHONHASHSEED=0
+# Python code archive stored uncompressed, so the LZMA disk image compresses it far better than zlib could.
+export PYINSTALLER_ZLIB_COMPRESSION_LEVEL=0
 SOURCE_DATE_EPOCH=$(git log -1 --format=%ct 2>/dev/null || date +%s); export SOURCE_DATE_EPOCH
 
 # ---------------------------------------------------------------- PyInstaller
@@ -87,6 +93,9 @@ APP="dist/Media Converter.app"
 cp LICENSE "$APP/Contents/Resources/LICENSE.txt"
 cp THIRD-PARTY-NOTICES.md "$APP/Contents/Resources/THIRD-PARTY-NOTICES.md"
 cp "$FF_DIR/README.txt" "$APP/Contents/Resources/FFMPEG-README.txt"
+cp "$FF_DIR/LICENSE.txt" "$APP/Contents/Resources/FFMPEG-LICENSE.txt"
+cp "$FF_DIR/BUILD-INFO.txt" "$APP/Contents/Resources/FFMPEG-BUILD-INFO.txt"
+cp -R "$FF_DIR/licenses" "$APP/Contents/Resources/FFMPEG-LICENSES"
 # Ad-hoc signature over the whole bundle (required to run on Apple silicon; not an Apple Developer ID).
 codesign --force --deep --sign - "$APP"
 codesign --verify --deep --strict "$APP" && echo "bundle signature: valid (ad-hoc)"
@@ -97,7 +106,7 @@ DMG="dist/MediaConverter-mac-$ARCH_NAME.dmg"
 STAGE=$(mktemp -d)
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
-hdiutil create -quiet -volname "Media Converter" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG"
+hdiutil create -quiet -volname "Media Converter" -srcfolder "$STAGE" -fs HFS+ -format ULMO -ov "$DMG"  # LZMA: smaller than UDZO; opens on macOS 10.15+
 rm -rf "$STAGE"
 
 # ---------------------------------------------------------------- fingerprints + build record
@@ -111,7 +120,7 @@ Source commit:      $COMMIT$DIRTY
 Built:              $(date -u '+%Y-%m-%d %H:%M UTC') on macOS $(sw_vers -productVersion) $(uname -m)
 Python:             $("$PY" -c 'import platform; print(platform.python_version())')
 Python libraries:   build/requirements-lock.txt (SHA-256 $LOCK_SHA), installed with --require-hashes
-FFmpeg:             $FFMPEG_VERSION  $FF_BASE  ffmpeg.zip SHA-256 $FFMPEG_SHA  ffprobe.zip SHA-256 $FFPROBE_SHA
+FFmpeg:             $FFMPEG_VERSION  $FF_RELEASE/$FF_ZIP  SHA-256 $FF_SHA
 App executable:     SHA-256 $EXE_SHA
 Signature:          ad-hoc (no Apple Developer ID; see README for opening it the first time)
 

@@ -9,8 +9,18 @@ is public in this repository, and the source of every component is available fro
 
 | Component | Version | Licence | Used for | Source |
 |---|---|---|---|---|
-| FFmpeg (Windows: full shared build by Gyan Doshi) | 9.0.2 | GPL-3.0 | Video, audio and animation conversion | https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz · build scripts: https://github.com/GyanD/codexffmpeg |
-| FFmpeg (Mac: static builds by Martin Riedl) | 9.0.2 | GPL-3.0 | Video, audio and animation conversion | https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz · build scripts: https://git.martin-riedl.de/ffmpeg/build-script |
+| FFmpeg, built by this project with `build/ffmpeg/build-ffmpeg.sh` | 9.0.2 | GPL-3.0 | Video, audio and animation conversion | https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz · every source below, in one archive: the `ffmpeg-9.0.2-mc1-sources.tar.gz` file on the [ffmpeg-9.0.2-mc1 release](https://github.com/anglerequip/media-converter/releases/tag/ffmpeg-9.0.2-mc1) |
+| · x264 | stable, commit b35605a | GPL-2.0-or-later | H.264 encoding | https://code.videolan.org/videolan/x264 |
+| · x265 | 4.2 | GPL-2.0-or-later | H.265/HEVC encoding | https://bitbucket.org/multicoreware/x265_git |
+| · SVT-AV1 | 4.2.0 | BSD-3-Clause-Clear, with the AOMedia patent licence | AV1 encoding | https://gitlab.com/AOMediaCodec/SVT-AV1 |
+| · libaom | 3.15.2 | BSD-2-Clause, with the AOMedia patent licence | AV1 lossless encoding | https://aomedia.googlesource.com/aom |
+| · libvpx | 1.17.0 | BSD-3-Clause | VP8/VP9 (WebM) | https://chromium.googlesource.com/webm/libvpx |
+| · dav1d | 1.5.4 | BSD-2-Clause | AV1 decoding | https://code.videolan.org/videolan/dav1d |
+| · libwebp | 1.6.0 | BSD-3-Clause | Animated WebP | https://chromium.googlesource.com/webm/libwebp |
+| · LAME | 3.100 | LGPL-2.0-or-later | MP3 encoding | https://lame.sourceforge.io |
+| · Opus | 1.6.1 | BSD-3-Clause | Opus audio | https://opus-codec.org |
+| · libogg, libvorbis | 1.3.6, 1.3.7 | BSD-3-Clause | Ogg Vorbis audio | https://xiph.org/vorbis/ |
+| · zlib (Windows only; macOS has its own) | 1.3.2 | Zlib | PNG and compressed streams | https://zlib.net |
 | Lucide icons (font) | 1.59.0 | ISC | Icons on macOS | https://github.com/lucide-icons/lucide |
 | Python | 3.12 | PSF-2.0 | Runs the app | https://www.python.org/downloads/source/ |
 | Tcl/Tk | 8.6 | Tcl/Tk licence (BSD-style) | Window toolkit | https://www.tcl-lang.org/software/tcltk/ |
