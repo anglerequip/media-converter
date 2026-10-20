@@ -20,7 +20,7 @@ Free, open source and private: everything runs on your own computer.</p>
     </picture>
   </a>
 </p>
-<p align="center"><sub>Windows 10 and 11: <code>MediaConverter-Setup.exe</code>, about 43 MB &nbsp;·&nbsp; macOS 11 or later: about 44 MB (Apple silicon) or 51 MB (<a href="https://github.com/anglerequip/media-converter/releases/latest/download/MediaConverter-mac-intel.dmg">Intel</a>), everything included
+<p align="center"><sub>Windows 10 and 11: <code>MediaConverter-Setup.exe</code>, about 43 MB &nbsp;·&nbsp; macOS 11 or later: about 45 MB (Apple silicon) or 52 MB (<a href="https://github.com/anglerequip/media-converter/releases/latest/download/MediaConverter-mac-intel.dmg">Intel</a>), everything included
 <br>All files, the portable Windows version and release notes: <a href="https://github.com/anglerequip/media-converter/releases/latest">GitHub Releases</a></sub></p>
 
 <p align="center"><img src="docs/screenshot.png" width="760" alt="Media Converter in dark mode after converting four iPhone and Android photos to JPG, with the format choices on the right"></p>
