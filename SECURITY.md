@@ -19,6 +19,11 @@
 - **Protections built in:** images claiming more than 500 megapixels are refused (a known way to exhaust memory);
   downloaded file and folder names are cleaned so they can't point outside the chosen folder or use reserved Windows
   names; only `https` addresses on Spotify's own servers are contacted for Spotify data.
+- **Links:** only `https://` and `http://` links are accepted, never `file:` or other kinds, and not links with a user
+  name or password in them. Links to this computer or the local network (such as a router's settings page) are refused:
+  the name is checked as you type, and the address it looks up to is checked again just before connecting. A public
+  site that redirects into a local network is not caught, because yt-dlp follows redirects itself. Downloaded files
+  are never opened or run by the app, and a cancelled or failed download removes what it had written.
 
 ## How the release is built, and how to check it
 

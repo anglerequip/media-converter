@@ -7,6 +7,7 @@ import queue
 import subprocess
 import sys
 import tkinter as tk
+import tkinter.font as tkfont
 from dataclasses import dataclass, field
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
@@ -14,7 +15,7 @@ from pathlib import Path
 from typing import Callable
 
 import customtkinter as ctk
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageColor, ImageDraw, ImageOps, ImageTk
 
 from . import motion as M
 from . import theme as T
@@ -242,6 +243,7 @@ class Tooltip:
         self.widget, self.text, self.delay = widget, text, delay
         self.tip: tk.Toplevel | None = None
         self.job = None
+        self.x_offset: Callable[[], int] | None = None  # where the hint starts, from the widget's left edge
         bind_tree(widget, "<Enter>", self._schedule)
         bind_tree(widget, "<Leave>", self._hide)
         bind_tree(widget, "<ButtonPress>", self._hide)
@@ -262,7 +264,7 @@ class Tooltip:
         text = self.text() if callable(self.text) else self.text
         if not text or self.tip is not None:
             return
-        x = self.widget.winfo_rootx() + 8
+        x = self.widget.winfo_rootx() + (self.x_offset() if self.x_offset else 8)
         y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
         self.tip = tw = tk.Toplevel(self.widget)
         tw.wm_overrideredirect(True)
@@ -284,75 +286,283 @@ class Tooltip:
 # ----------------------------------------------------------------------------- segmented control
 
 
+@lru_cache(maxsize=512)
+def _rounded_image(w: int, h: int, r: int, fill: str, border: str | None, bw: int) -> ImageTk.PhotoImage:
+    """An anti-aliased rounded rectangle for a canvas, drawn at 4x and scaled down."""
+    k, edge = 4, border or fill
+    img = Image.new("RGBA", (w * k, h * k), ImageColor.getrgb(edge)[:3] + (0,))  # edge colour, so no dark fringe
+    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle((0, 0, w * k - 1, h * k - 1), r * k, fill=edge)
+    if border and bw:
+        draw.rounded_rectangle((bw * k, bw * k, w * k - 1 - bw * k, h * k - 1 - bw * k), max(0, r - bw) * k, fill=fill)
+    return ImageTk.PhotoImage(img.resize((w, h), Image.LANCZOS))
+
+
+@lru_cache(maxsize=512)
+def _glyph_image(name: str, px: int, colour: str) -> ImageTk.PhotoImage:
+    char = T._icon_source()[1][name]
+    return ImageTk.PhotoImage(T._render_glyph(char, px * 3, colour).resize((px, px), Image.LANCZOS))
+
+
+def _mix(a: str, b: str, t: float) -> str:
+    ca, cb = ImageColor.getrgb(a), ImageColor.getrgb(b)
+    return "#%02X%02X%02X" % tuple(round(ca[i] + (cb[i] - ca[i]) * t) for i in range(3))
+
+
 class Segmented(ctk.CTkFrame):
-    """A Windows 11 style segmented control: a grey track with a raised pill on the chosen option.
+    """A segmented control: a grey track with a raised pill that slides to the chosen option.
+
+    Everything is drawn on one canvas, so the pill can glide between the options and their labels can
+    brighten as it arrives (with a widget per option, each one's background would hide the pill).
+    Once Tab reaches it, Left and Right (or Home and End) choose an option.
 
     options: list of (value, label, tooltip or None, icon name or None)
     """
 
+    INSET, GAP, ICON = 3, 2, 15
+
     def __init__(self, parent, options, command: Callable[[str], None] | None = None, value: str | None = None,
-                 height: int = 32, font_size: int = 12, equal: bool = True, **kw) -> None:
-        super().__init__(parent, fg_color=T.SURFACE_ALT, corner_radius=T.RADIUS, border_width=1,
-                         border_color=T.BORDER, **kw)
+                 height: int = 32, font_size: int = 12, equal: bool = True, min_segment: int = 0, **kw) -> None:
         self.command = command
-        self.buttons: dict[str, ctk.CTkButton] = {}
-        self.icons: dict[str, str | None] = {}
-        self.value: str | None = None
+        self.values = [o[0] for o in options]
+        self.labels = {o[0]: o[1] for o in options}
+        self.tips = {o[0]: o[2] for o in options}
+        self.icons = {o[0]: o[3] for o in options}
         self.disabled: set[str] = set()
-        for i, (val, label, tip, icon_name) in enumerate(options):
-            b = ctk.CTkButton(
-                self, text=label, height=height - 6, corner_radius=T.RADIUS_SMALL, border_width=1,
-                fg_color=T.SURFACE_ALT, border_color=T.SURFACE_ALT, text_color=T.MUTED,
-                font=T.font(font_size, "semibold"), compound="left", border_spacing=6,
-                width=0 if label else height - 6,
-                command=lambda v=val: self.set(v, notify=True),
-            )
-            b.grid(row=0, column=i, padx=(3 if i == 0 else 1, 3 if i == len(options) - 1 else 1), pady=3, sticky="nsew")
-            if equal:
-                self.grid_columnconfigure(i, weight=1, uniform="seg")
-            make_focusable(b)
-            M.smooth_hover(b, T.SURFACE_HOVER)
-            if tip:
-                Tooltip(b, tip)
-            self.buttons[val] = b
-            self.icons[val] = icon_name
-        self.set(value if value is not None else options[0][0])
+        self.locked = False
+        self.value = value if value in self.values else self.values[0]
+        self.font = T.font(font_size, "semibold")
+        self.equal = equal
+        natural = []
+        for v in self.values:
+            if self.labels[v]:
+                w = self.font.measure(self.labels[v]) + 24 + (self.ICON + 6 if self.icons[v] else 0)
+            else:
+                w = height  # icon only: a little wider than tall
+            natural.append(max(w, min_segment))
+        if equal:
+            natural = [max(natural)] * len(natural)
+        self._natural = natural
+        width = sum(natural) + 2 * self.INSET + self.GAP * (len(natural) - 1)
+        super().__init__(parent, fg_color="transparent", width=width, height=height, corner_radius=0, border_width=0, **kw)
+
+        self._rects: dict[str, tuple[int, int, int, int]] = {}  # canvas pixels: x0, y0, x1, y1
+        self._layout: dict[str, tuple[int, int, int, str]] = {}  # icon x, text x, centre y, fitted label
+        self._pill: list[float] | None = None  # the pill's left and right edge, None until first laid out
+        self._hover: str | None = None
+        self._lit = {v: 0.0 for v in self.values}  # hover highlight, 0..1
+        self._scale = 0.0
+        self._size = (0, 0)
+        self._cfont = None
+        self._shown: dict = {}  # last value given to each canvas item, to skip redundant redraws
+
+        c = self.canvas = tk.Canvas(self, highlightthickness=0, bd=0, takefocus=self._can_focus)
+        c.place(x=0, y=0, relwidth=1, relheight=1)
+        self._track = c.create_image(0, 0, anchor="nw")
+        self._pill_item = c.create_image(0, 0, anchor="nw")
+        self._items = {v: (c.create_image(0, 0, anchor="w"), c.create_text(0, 0, anchor="w")) for v in self.values}
+        c.bind("<Configure>", self._on_configure)
+        c.bind("<Motion>", lambda e: self._set_hover(self._value_at(e.x)))
+        c.bind("<Leave>", lambda _e: self._set_hover(None))
+        c.bind("<ButtonPress-1>", self._on_press)
+        c.bind("<FocusIn>", lambda _e: self._paint())
+        c.bind("<FocusOut>", lambda _e: self._paint())
+        c.bind("<Left>", lambda _e: self._step(-1))
+        c.bind("<Right>", lambda _e: self._step(1))
+        c.bind("<Home>", lambda _e: self._step(-len(self.values)))
+        c.bind("<End>", lambda _e: self._step(len(self.values)))
+        self.tooltip = Tooltip(c, lambda: self.tips.get(self._hover) if self._hover else None)
+        self.tooltip.x_offset = lambda: self._rects[self._hover][0] if self._hover in self._rects else 8
+
+    # -- public
+
+    def get(self) -> str | None:
+        return self.value
 
     def set(self, value: str, notify: bool = False) -> None:
-        if value not in self.buttons:
+        """Choose an option; the pill glides there. notify=True also runs the command (when the choice changed)."""
+        if value not in self.values or value == self.value:
             return
-        first = self.value is None
         self.value = value
-        self._paint(0 if first else M.NORMAL)
+        self._update_cursor()
+        self._glide()
         if notify and self.command:
             self.command(value)
 
     def set_disabled(self, values) -> None:
-        """Grey out options that don't apply right now (they can't be chosen or reached with Tab)."""
+        """Grey out options that don't apply right now (they can't be chosen with the mouse or keyboard)."""
         values = set(values)
-        if values == self.disabled:
+        if values != self.disabled:
+            self.disabled = values
+            self._update_cursor()
+            self._paint()
+
+    def set_locked(self, locked: bool) -> None:
+        """Show the choice but don't let it change (while a conversion runs, for example)."""
+        if locked != self.locked:
+            self.locked = locked
+            self._update_cursor()
+            self._paint()
+
+    # -- layout and drawing
+
+    def _on_configure(self, e) -> None:
+        s = scaling(self)
+        if s != self._scale or self._cfont is None:
+            self._scale = s
+            self._cfont = tkfont.Font(root=self, family=self.font.cget("family"), weight=self.font.cget("weight"),
+                                      size=-round(abs(self.font.cget("size")) * s))
+        W, H = self._size = (e.width, e.height)
+        inset, gap = round(self.INSET * s), round(self.GAP * s)
+        avail = W - 2 * inset - gap * (len(self.values) - 1)
+        if self.equal:
+            widths = [avail / len(self.values)] * len(self.values)
+        else:
+            widths = [avail * w / sum(self._natural) for w in self._natural]
+        icon_px, icon_gap, pad = round(self.ICON * s), round(6 * s), round(6 * s)  # pad: least room beside a label
+        x = float(inset)
+        for v, w in zip(self.values, widths):
+            x0, x1 = round(x), round(x + w)
+            self._rects[v] = (x0, inset, x1, H - inset)
+            label, icon_name = self.labels[v], self.icons[v]
+            if label:
+                room = x1 - x0 - 2 * pad - (icon_px + icon_gap if icon_name else 0)
+                text = fit_text(label, self._cfont, room, end=True)
+                group = self._cfont.measure(text) + (icon_px + icon_gap if icon_name else 0)
+                gx = x0 + (x1 - x0 - group) / 2
+                self._layout[v] = (round(gx), round(gx + (icon_px + icon_gap if icon_name else 0)), H // 2, text)
+            else:
+                self._layout[v] = (round(x0 + (x1 - x0 - icon_px) / 2), 0, H // 2, "")
+            x += w + gap
+        if self._pill is None or not M.running(self, "pill"):
+            r = self._rects[self.value]
+            self._pill = [r[0], r[2]]
+        self._shown.clear()
+        self._paint()
+
+    def _glide(self) -> None:
+        goal = self._rects.get(self.value)
+        if goal is None or self._pill is None:
             return
-        self.disabled = values
-        for val, b in self.buttons.items():
-            b.configure(state="disabled" if val in values else "normal")
-        self._paint(M.NORMAL)
+        start = tuple(self._pill)
+        distance = abs(goal[0] - start[0]) / max(self._scale, 0.5)
+        duration = int(min(M.SLOW, max(M.NORMAL, 140 + distance * 0.5)))  # longer trips take a little longer
 
-    def _paint(self, duration: int) -> None:
-        for val, b in self.buttons.items():
-            active, off = val == self.value, val in self.disabled
-            icon_name = self.icons[val]
-            text = T.FAINT if off else T.TEXT if active else T.MUTED
-            M.paint(
-                b, duration=duration,
-                fg_color=T.SURFACE if active else T.SURFACE_ALT,
-                hover_color=T.SURFACE if active else T.SURFACE_HOVER,
-                text_color=text, text_color_disabled=T.FAINT,
-                border_color=T.BORDER_STRONG if active else T.SURFACE_ALT,
-                image=T.icon(icon_name, 15, T.FAINT if off else T.ACCENT_TEXT if active else T.MUTED) if icon_name else None,
-            )
+        def step(t: float) -> None:
+            r = self._rects.get(self.value, goal)  # follow the target if the window is resized mid-glide
+            self._pill = [start[0] + (r[0] - start[0]) * t, start[1] + (r[2] - start[1]) * t]
+            self._paint()
 
-    def get(self) -> str | None:
-        return self.value
+        M.animate(self, "pill", duration, step, ease=M.ease_out_quart)
+
+    def _put(self, item, kind: str, **opts) -> None:
+        key = (item, kind)
+        if self._shown.get(key) != opts:
+            self._shown[key] = opts
+            if kind == "coords":
+                self.canvas.coords(item, opts["x"], opts["y"])
+            else:
+                self.canvas.itemconfigure(item, **opts)
+
+    def _paint(self) -> None:
+        if self._pill is None or not self._rects:
+            return
+        c, s, res = self.canvas, self._scale, T.resolve
+        W, H = self._size
+        line = max(1, round(s))
+        bg = self._apply_appearance_mode(self._bg_color)
+        if self._shown.get("bg") != bg:
+            self._shown["bg"] = bg
+            c.configure(bg=bg)
+        self._put(self._track, "image", image=_rounded_image(W, H, round(T.RADIUS * s), res(T.SURFACE_ALT), res(T.BORDER), line))
+
+        x0, x1 = self._pill
+        r = self._rects[self.value]
+        focused = str(c.tk.call("focus")) == str(c)
+        border, bw = (res(T.FOCUS), max(2, round(2 * s))) if focused else (res(T.SEGMENT_BORDER), line)
+        self._put(self._pill_item, "image", image=_rounded_image(max(2, round(x1 - x0)), r[3] - r[1], round(T.RADIUS_SMALL * s),
+                                                                 res(T.SEGMENT), border, bw))
+        self._put(self._pill_item, "coords", x=round(x0), y=r[1])
+
+        icon_px = round(self.ICON * s)
+        muted, text, faint, accent = res(T.MUTED), res(T.TEXT), res(T.FAINT), res(T.ACCENT_TEXT)
+        for v in self.values:
+            rx0, _, rx1, _ = self._rects[v]
+            icon_item, text_item = self._items[v]
+            ix, tx, cy, label = self._layout[v]
+            covered = max(0.0, min(x1, rx1) - max(x0, rx0)) / max(1, rx1 - rx0)  # how much of this option the pill covers
+            if v in self.disabled or self.locked:
+                fg = icon_fg = faint
+            else:
+                lit = round(max(covered, self._lit[v]) * 8) / 8  # 8 steps are smooth enough and keep the cache small
+                fg = _mix(muted, text, lit)
+                icon_fg = _mix(_mix(muted, text, round(self._lit[v] * 8) / 8), accent, round(covered * 8) / 8)
+            self._put(text_item, "text", text=label, font=self._cfont, fill=fg)
+            self._put(text_item, "coords", x=tx, y=cy)
+            if self.icons[v]:
+                self._put(icon_item, "image", image=_glyph_image(self.icons[v], icon_px, icon_fg))
+                self._put(icon_item, "coords", x=ix, y=cy + (round(s) if label else 0))  # optical centre beside text
+
+    def _draw(self, no_color_updates: bool = False) -> None:
+        super()._draw(no_color_updates)
+        if hasattr(self, "canvas"):  # theme or scaling changed
+            self._shown.clear()
+            self._paint()
+
+    # -- input
+
+    def _value_at(self, x: int) -> str | None:
+        for v in self.values:
+            x0, _, x1, _ = self._rects.get(v, (0, 0, 0, 0))
+            if x0 - 2 <= x <= x1 + 2:
+                return v
+        return None
+
+    def _on_press(self, e) -> None:
+        v = self._value_at(e.x)
+        if v is not None and v not in self.disabled and not self.locked:
+            self.set(v, notify=True)
+
+    def _step(self, direction: int) -> str:
+        usable = [v for v in self.values if v not in self.disabled]
+        if usable and not self.locked:
+            i = self.values.index(self.value)
+            if abs(direction) > 1:
+                target = usable[0] if direction < 0 else usable[-1]
+            else:
+                later = [v for v in self.values[i + 1:] if v in usable] if direction > 0 else \
+                    [v for v in reversed(self.values[:i]) if v in usable]
+                target = later[0] if later else self.value
+            self.set(target, notify=True)
+        return "break"
+
+    def _can_focus(self, _name=None) -> int:
+        return 1 if not self.locked and len(self.disabled) < len(self.values) and self.canvas.winfo_viewable() else 0
+
+    def _set_hover(self, value: str | None) -> None:
+        if value == self._hover:
+            return
+        self._hover = value
+        self._update_cursor()
+        self.tooltip._hide()
+        if value is not None and self.tips.get(value):
+            self.tooltip._schedule()
+        for v in self.values:
+            goal = 1.0 if v == value and v not in self.disabled and not self.locked else 0.0
+            start = self._lit[v]
+            if start == goal:
+                continue
+
+            def step(t: float, v=v, start=start, goal=goal) -> None:
+                self._lit[v] = start + (goal - start) * t
+                self._paint()
+
+            M.animate(self, f"hover-{v}", M.FAST, step)
+
+    def _update_cursor(self) -> None:
+        h = self._hover
+        usable = h is not None and h != self.value and h not in self.disabled and not self.locked
+        self.canvas.configure(cursor="hand2" if usable else "")
 
 
 # ----------------------------------------------------------------------------- format chip

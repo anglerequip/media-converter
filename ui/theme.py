@@ -28,6 +28,8 @@ ACCENT_TEXT = ("#2B6CB0", "#78B1EC")  # accent used as text: darker in light mod
 ON_ACCENT = ("#FFFFFF", "#FFFFFF")
 ACCENT_DISABLED = ("#A8C7E9", "#2A3D52")
 FOCUS = ("#3987D7", "#78B1EC")
+SEGMENT = ("#FFFFFF", "#383B42")  # the chosen option's pill in a segmented control, raised above its track
+SEGMENT_BORDER = ("#C6CBD3", "#4C5059")
 
 SUCCESS = ("#1E7F45", "#4CC07A")
 SUCCESS_SOFT = ("#E6F4EB", "#1B3024")
@@ -115,12 +117,17 @@ def _icon_source() -> tuple[str | None, dict]:
     return None, GLYPHS
 
 
+@lru_cache(maxsize=None)
+def _glyph_font(path: str, size: int) -> ImageFont.FreeTypeFont:
+    return ImageFont.truetype(path, size)
+
+
 def _render_glyph(char: str, px: int, colour: str) -> Image.Image:
     img = Image.new("RGBA", (px, px), (0, 0, 0, 0))
     path, _ = _icon_source()
     draw = ImageDraw.Draw(img)
     if path:
-        f = ImageFont.truetype(path, int(px * (0.82 if path == LUCIDE_FONT else 0.92)))
+        f = _glyph_font(path, int(px * (0.82 if path == LUCIDE_FONT else 0.92)))
         box = draw.textbbox((0, 0), char, font=f)
         x = (px - (box[2] - box[0])) / 2 - box[0]
         y = (px - (box[3] - box[1])) / 2 - box[1]

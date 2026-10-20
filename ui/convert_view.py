@@ -784,6 +784,10 @@ class ConvertView(ctk.CTkFrame):
 
             def walk(widget) -> None:
                 for w in widget.winfo_children():
+                    if isinstance(w, Segmented):
+                        self._locked_states[w] = None
+                        w.set_locked(True)
+                        continue
                     if isinstance(w, (ctk.CTkButton, ctk.CTkSwitch, ctk.CTkOptionMenu)):
                         self._locked_states[w] = w.cget("state")
                         w.configure(state="disabled")
@@ -794,7 +798,7 @@ class ConvertView(ctk.CTkFrame):
         else:
             for w, state in getattr(self, "_locked_states", {}).items():
                 if w.winfo_exists():
-                    w.configure(state=state)
+                    w.set_locked(False) if isinstance(w, Segmented) else w.configure(state=state)
             self._locked_states = {}  # refresh() puts the "Detected ..." line back
 
     def _refresh_status(self) -> None:

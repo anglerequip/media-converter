@@ -36,7 +36,7 @@ Free, open source and private: everything runs on your own computer.</p>
 - **Batches:** drag in files or whole folders and see progress and space saved
 - **Works offline:** files are converted on your PC and never uploaded; the app never updates itself or connects in the background, and goes online only when you download from a link
 - **Light and dark mode** and smooth animations that follow your system's reduce-motion setting
-- **Keyboard friendly:** every control works with Tab, Space and Enter; Ctrl+O adds files, Ctrl+Enter converts, Esc cancels
+- **Keyboard friendly:** every control works with Tab, Space and Enter, and the arrow keys move between choices; Ctrl+1 and Ctrl+2 switch screens, Ctrl+O adds files, Ctrl+Enter starts, Esc cancels
 
 ## Install
 
@@ -97,6 +97,8 @@ Drop files in, pick a format and press **Convert Files**. To save a video, paste
 
 - **Best video** picks the highest resolution offered; on YouTube that is often AV1 or VP9, which Windows 11 plays. Choose **Compatible video** (H.264) for older devices.
 - Private, age-restricted, members-only and copy-protected videos are not supported.
+- Links to your own computer or local network (a router or a NAS, for example) are refused; only public websites work.
+- A cancelled or failed download removes its unfinished file.
 - **Spotify:** Spotify's own audio is copy-protected and is never touched. The app reads each song's title, artist, length and cover from Spotify and looks for the same recording on YouTube Music. Each match is shown with its thumbnail, title and a link so you can check it, and nothing is downloaded until you confirm. The saved file gets Spotify's details. A song is only saved when length, artist and title all match; otherwise it is skipped rather than guessed. M4A keeps YouTube's audio as it is (about 128 kbps AAC); MP3 converts it for older devices. Playlists are limited to their first 100 songs, and podcasts can't be saved because Spotify protects them.
 - If a site stops working, download the newest Media Converter from this page: each release ships with the newest yt-dlp.
 

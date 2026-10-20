@@ -5,6 +5,7 @@ from __future__ import annotations
 import queue
 import sys
 import threading
+import time
 from pathlib import Path
 from tkinter import filedialog
 from urllib.parse import urlparse
@@ -12,7 +13,7 @@ from urllib.parse import urlparse
 import customtkinter as ctk
 
 from converter import spotify
-from converter.downloader import download
+from converter.downloader import UnsafeLink, check_url, download
 from converter.ffmpeg_tools import Cancelled, ConversionError
 
 from . import motion as M
@@ -21,7 +22,7 @@ from .convert_view import help_text, section_title, switch
 from .spotify_flow import SpotifyFlow
 from .widgets import (
     Segmented, SmoothProgress, Tooltip, autohide_scrollbar, fit_text, ghost_button, human_size, primary_button,
-    secondary_button, set_primary_enabled,
+    scaling, secondary_button, set_primary_enabled,
 )
 
 SITE_NAMES = {
@@ -49,6 +50,10 @@ MODE_TEXT = {
 
 def friendly_error(message: str) -> str:
     m = message.lower()
+    if "permission denied" in m or "errno 13" in m or "access is denied" in m:
+        return "Couldn't save into the download folder. Choose another folder under Save to."
+    if "no space left" in m or "errno 28" in m or "not enough space" in m:
+        return "The disk is full. Free up some space or choose another folder under Save to."
     if "unsupported url" in m:
         return "This site or page isn't supported."
     if "private" in m:
@@ -57,6 +62,8 @@ def friendly_error(message: str) -> str:
         return "This video needs a signed-in account (private, age-restricted or members-only). That isn't supported."
     if "404" in m or "not found" in m or "does not exist" in m or "unavailable" in m or "removed" in m:
         return "The video couldn't be found. It may have been removed or the link may be wrong."
+    if "410" in m or "expired" in m or "403" in m and "forbidden" in m:
+        return "The site refused the download, or the link has expired. Copy a fresh link and try again."
     if "429" in m or "too many requests" in m or "rate" in m and "limit" in m:
         return "The site is limiting downloads right now. Try again in a few minutes."
     if "getaddrinfo" in m or "unable to download webpage" in m or "timed out" in m or "connection" in m:
@@ -84,13 +91,22 @@ class DownloadView(ctk.CTkFrame):
         self.grid_columnconfigure(1, weight=0, minsize=340)
         self.grid_rowconfigure(0, weight=1)
         self._job_cancel: threading.Event | None = None
+        self._site = ""  # the recognised site's name, for the status line
+        self.last_saved: Path | None = None
         self._build_main()
         self._build_history()
+        self._build_action_bar()
         self.spotify = SpotifyFlow(self)
         # Load yt-dlp's site list once the window is on screen, so it doesn't compete with building it.
         self.after(1200, lambda: threading.Thread(target=self._load_extractors, daemon=True).start())
-        self.after(80, self._drain)
+        self._drain_job = self.after(80, self._drain)
         self._validate()
+
+    def destroy(self) -> None:
+        for job in (self._drain_job, self._job):
+            if job:
+                self.after_cancel(job)
+        super().destroy()
 
     # ------------------------------------------------------------------ layout
 
@@ -116,7 +132,7 @@ class DownloadView(ctk.CTkFrame):
         row.grid_columnconfigure(0, weight=1)
         self.entry = ctk.CTkEntry(
             row, height=40, corner_radius=T.RADIUS_SMALL, border_width=1, border_color=T.BORDER_STRONG,
-            fg_color=T.SURFACE_ALT, text_color=T.TEXT, placeholder_text="https://www.youtube.com/watch?v=…",
+            fg_color=T.SURFACE_ALT, text_color=T.TEXT, placeholder_text="Paste a link, like https://www.youtube.com/watch?v=…",
             placeholder_text_color=T.FAINT, font=T.font(13),
         )
         self.entry.grid(row=0, column=0, sticky="ew")
@@ -165,28 +181,53 @@ class DownloadView(ctk.CTkFrame):
         ghost_button(dest, "Change", self.pick_dir, colour=T.ACCENT_TEXT, height=28).grid(row=0, column=3, padx=(0, 6))
         self._update_dest()
 
-        inner.grid_rowconfigure(11, weight=1)
-        actions = ctk.CTkFrame(inner, fg_color="transparent")
-        actions.grid(row=12, column=0, sticky="ew", pady=(24, 0))
-        actions.grid_columnconfigure(0, weight=1)
-        self.status = ctk.CTkLabel(actions, text="", font=T.font(12), text_color=T.MUTED, anchor="w")
-        self.status.grid(row=0, column=0, sticky="w")
-        self.bar = SmoothProgress(actions, height=6)
-        self.bar.grid(row=1, column=0, sticky="ew", pady=(4, 0))
-        self.bar.grid_remove()
-        self.cancel_btn = secondary_button(actions, "Cancel", self.cancel, icon_name="stop", height=40)
-        self.cancel_btn.configure(text_color=T.ERROR, image=T.icon("stop", 15, T.ERROR))
-        self.cancel_btn.grid(row=0, column=1, rowspan=2, padx=(12, 6))
-        self.cancel_btn.grid_remove()
-        self.dl_btn = primary_button(actions, "Download", self.start, icon_name="download", height=42, width=160)
-        self.dl_btn.configure(font=T.font(14, "semibold"))
-        self.dl_btn.grid(row=0, column=2, rowspan=2, padx=(6, 0))
-
+        inner.grid_rowconfigure(11, weight=1)  # room for the Spotify results; keeps the note at the bottom
         self.footnote = help_text(inner, "Only download videos you own or have permission to save, and follow each "
                                          "site's terms. Private, paid and copy-protected videos are not supported.",
                                   colour=T.FAINT)
-        self.footnote.grid(row=13, column=0, sticky="w", pady=(18, 0))
+        self.footnote.grid(row=12, column=0, sticky="w", pady=(18, 0))
+
+    def _build_action_bar(self) -> None:
+        """The same bar, in the same place, as on the Convert screen, so the main button never jumps
+        when switching between the two."""
+        bar = self.action_bar = ctk.CTkFrame(self, fg_color=T.SURFACE, corner_radius=T.RADIUS_LARGE, border_width=1,
+                                             border_color=T.BORDER)
+        bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        bar.grid_columnconfigure(0, weight=1)
+        bar.bind("<Configure>", self._fit_status, add="+")
+        self.status_title = ctk.CTkLabel(bar, text="", font=T.font(14, "semibold"), text_color=T.TEXT, anchor="w", height=20)
+        self.status_title.grid(row=0, column=0, sticky="sw", padx=18, pady=(14, 0))
+        self.status_detail = ctk.CTkLabel(bar, text="", font=T.font(12), text_color=T.MUTED, anchor="w", height=18)
+        self.status_detail.grid(row=1, column=0, sticky="nw", padx=18, pady=(0, 14))
+        self.bar = SmoothProgress(bar, height=6)
+        self.bar.grid(row=2, column=0, columnspan=6, sticky="ew", padx=18, pady=(0, 14))
+        self.bar.grid_remove()
+        self.open_btn = secondary_button(bar, "Show in Folder", self.show_last, icon_name="folder_open", height=38)
+        self.open_btn.grid(row=0, column=2, rowspan=2, padx=4)
+        self.open_btn.grid_remove()
+        self.cancel_btn = secondary_button(bar, "Cancel", self.cancel, icon_name="stop", height=38)
+        self.cancel_btn.configure(text_color=T.ERROR, image=T.icon("stop", 15, T.ERROR))
+        self.cancel_btn.grid(row=0, column=3, rowspan=2, padx=4)
+        self.cancel_btn.grid_remove()
+        self.dl_btn = primary_button(bar, "Download", self.start, icon_name="download", height=42, width=176)
+        self.dl_btn.configure(font=T.font(14, "semibold"))
+        self.dl_btn.grid(row=0, column=4, rowspan=2, padx=(6, 14), pady=12)
+        self.dl_tip = Tooltip(self.dl_btn, "")
         self._on_mode(self.mode.get(), save=False)
+
+    def _status(self, title: str, detail: str = "", colour=T.TEXT) -> None:
+        """The two lines on the left of the bottom bar."""
+        self._status_text = (title, detail, colour)
+        self._fit_status()
+
+    def _fit_status(self, _e=None) -> None:
+        title, detail, colour = getattr(self, "_status_text", ("", "", T.TEXT))
+        s = max(scaling(self), 0.5)
+        width = self.action_bar.winfo_width()
+        buttons = sum(b.winfo_reqwidth() for b in (self.open_btn, self.cancel_btn, self.dl_btn) if b.grid_info())
+        room = (width - buttons) / s - 80 if width > 1 else 520
+        self.status_title.configure(text=fit_text(title, T.font(14, "semibold"), room, end=True), text_color=colour)
+        self.status_detail.configure(text=fit_text(detail, T.font(12), room, end=True))
 
     def _build_history(self) -> None:
         panel = ctk.CTkFrame(self, fg_color=T.SURFACE, corner_radius=T.RADIUS_LARGE, border_width=1, border_color=T.BORDER, width=340)
@@ -219,11 +260,13 @@ class DownloadView(ctk.CTkFrame):
             from yt_dlp.extractor import gen_extractor_classes
 
             classes = [ie for ie in gen_extractor_classes() if ie.ie_key() != "Generic"]
-            for ie in classes:  # compile every pattern now, so checking a link later is instant
+            for i, ie in enumerate(classes):  # compile every pattern now, so checking a link later is instant
                 try:
                     ie.suitable("https://example.invalid/")
                 except Exception:
                     pass
+                if i % 8 == 7:
+                    time.sleep(0.002)  # step aside regularly, so the window stays smooth while this runs
             self.extractors = classes
         except Exception:
             self.extractors = []
@@ -269,10 +312,19 @@ class DownloadView(ctk.CTkFrame):
             self._show_check(None, "")
         else:
             parsed = urlparse(url)
-            if parsed.scheme not in ("http", "https") or "." not in parsed.netloc or " " in url:
+            self._site = ""
+            try:
+                check_url(url)
+                unsafe = ""
+            except UnsafeLink as exc:
+                unsafe = str(exc)
+            if unsafe and "://" in self.entry.get():  # a full address that the app won't open: say why
+                self._show_check("error", unsafe)
+            elif unsafe or "." not in parsed.netloc or " " in url:
                 self._show_check("error", "That doesn't look like a web address. Links start with https://")
             elif spotify.parse_link(url) and spotify.parse_link(url)[0] in SPOTIFY_KINDS:
                 self.url_ok = True
+                self._site = "Spotify"
                 kind = SPOTIFY_KINDS[spotify.parse_link(url)[0]]
                 extra = (f" Only the first {spotify.PLAYLIST_LIMIT} songs of a playlist are available."
                          if kind == "playlist" else "")
@@ -292,7 +344,7 @@ class DownloadView(ctk.CTkFrame):
                     self._show_check("error", f"{what} copy-protected (DRM), so they can't be downloaded.")
                 elif ie is not None:
                     key = ie.IE_NAME.split(":")[0].lower()
-                    name = SITE_NAMES.get(key, ie.IE_NAME.split(":")[0].replace("_", " ").title())
+                    name = self._site = SITE_NAMES.get(key, ie.IE_NAME.split(":")[0].replace("_", " ").title())
                     if not ie.working():
                         self._show_check("warn", f"{name} link. This site's downloader is currently marked as broken, "
                                                  "so it may fail. A newer Media Converter from the project page may fix it.")
@@ -314,7 +366,7 @@ class DownloadView(ctk.CTkFrame):
         self.mode.set_disabled({"best", "compatible"} if spotify_music else set())
         if spotify_music and self.mode.get() not in ("mp3", "m4a"):
             self.mode.set("m4a")
-        elif not spotify_music and self.s.get("dl_mode") in self.mode.buttons and self.mode.get() != self.s["dl_mode"]:
+        elif not spotify_music and self.s.get("dl_mode") in self.mode.values and self.mode.get() != self.s["dl_mode"]:
             self.mode.set(self.s["dl_mode"])  # back to the user's own choice
         self._on_mode(self.mode.get(), save=False)
         self._update_button()
@@ -325,8 +377,21 @@ class DownloadView(ctk.CTkFrame):
 
     def _update_button(self) -> None:
         set_primary_enabled(self.dl_btn, self.url_ok and not self.busy)
-        if not self.busy:
-            self.status.configure(text="" if self.url_ok else "Paste a link to begin.", text_color=T.MUTED)
+        if self.busy:
+            return
+        has_text = bool(self.entry.get().strip())
+        self.dl_tip.set("" if self.url_ok else "Fix the link first" if has_text else "Paste a link first")
+        if self.spotify.visible():
+            return  # the results panel is talking to the user
+        if self.url_ok:
+            what = {"best": "Best video (MP4)", "compatible": "Compatible video (MP4)", "mp3": "MP3 audio",
+                    "m4a": "M4A audio"}[self.mode.get()]
+            where = f"Saves to {self.dl_dir.name or self.dl_dir}"
+            self._status("Ready to download", "  ·  ".join(x for x in (self._site, what, where) if x))
+        elif has_text:
+            self._status("Check the link", "The message under the link says what's wrong.")
+        elif self.last_saved is None or not self.open_btn.grid_info():
+            self._status("No link yet", "Paste a video or music link above, then press Enter or Download.")
 
     # ------------------------------------------------------------------ actions
 
@@ -343,6 +408,7 @@ class DownloadView(ctk.CTkFrame):
     def _on_mode(self, mode: str, save: bool = True) -> None:
         if save:
             self.s["dl_mode"] = mode
+            self._update_button()
         if self._spotify_music():
             note = SPOTIFY_NOTE
             if mode not in ("mp3", "m4a"):
@@ -357,14 +423,28 @@ class DownloadView(ctk.CTkFrame):
             self.dl_dir = Path(folder)
             self.s["dl_dir"] = folder
             self._update_dest()
+            self._update_button()
 
     def _update_dest(self) -> None:
         text = str(self.dl_dir)
         self.dest_label.configure(text=fit_text(text, T.font(12), 380))
         self.dest_tip.set(text)
 
+    def show_last(self) -> None:
+        if self.last_saved is not None:
+            self.app.reveal(self.last_saved if self.last_saved.exists() else self.dl_dir)
+
     def start(self) -> None:
-        if self.busy or not self.url_ok:
+        if self.busy:
+            return  # one download at a time; the button is disabled meanwhile
+        dialog = getattr(self.spotify, "dialog", None)
+        if dialog is not None and dialog.winfo_exists():
+            dialog.focus_set()  # the Spotify explanation is already open
+            return
+        if not self.url_ok:
+            if not self.entry.get().strip():
+                self._show_check("info", "Paste a link first: copy it from the site's Share button or address bar.")
+            self.entry.focus_set()
             return
         url = self._clean_url()
         if self._spotify_music():
@@ -374,13 +454,15 @@ class DownloadView(ctk.CTkFrame):
         self._job_cancel = None
         self.busy = True
         self.app.set_busy(True)
+        self.mode.set_locked(True)  # changing it now wouldn't affect this download
         self.cancel_event.clear()
         set_primary_enabled(self.dl_btn, False)
+        self.open_btn.grid_remove()
         self.cancel_btn.grid()
         self.cancel_btn.configure(state="normal", text="Cancel", image=T.icon("stop", 15, T.ERROR))
         self.bar.grid()
         self.bar.jump(0)
-        self.status.configure(text="Connecting…", text_color=T.MUTED)
+        self._status("Connecting…", f"Asking {self._site or 'the site'} for the file.")
         mode = self.mode.get()
         playlist = bool(self.playlist.get()) and bool(self.playlist.winfo_ismapped())
         threading.Thread(target=self._worker, args=(url, mode, playlist), daemon=True).start()
@@ -389,6 +471,7 @@ class DownloadView(ctk.CTkFrame):
         if self.busy:
             (self._job_cancel or self.cancel_event).set()
             self.cancel_btn.configure(state="disabled", text="Cancelling…", image=T.blank(15))
+            self._status("Cancelling…", "Stopping and removing the unfinished file.")
 
     def _worker(self, url: str, mode: str, playlist: bool) -> None:
         def progress(fraction: float, text: str) -> None:
@@ -402,6 +485,8 @@ class DownloadView(ctk.CTkFrame):
             self.events.put(("done", files))
         except Cancelled:
             self.events.put(("cancelled",))
+        except UnsafeLink as exc:
+            self.events.put(("failed", str(exc)))
         except ConversionError as exc:
             self.events.put(("failed", friendly_error(str(exc))))
         except Exception as exc:
@@ -410,19 +495,22 @@ class DownloadView(ctk.CTkFrame):
     # -- used by the Spotify flow
 
     def set_status(self, text: str, colour=T.MUTED) -> None:
-        self.status.configure(text=text, text_color=colour)
+        self._status(text, "", T.TEXT if colour == T.MUTED else colour)
 
     def set_progress(self, fraction: float, text: str) -> None:
         if not self.bar.winfo_ismapped():
             self.bar.grid()
         self.bar.glide(fraction)
-        self.status.configure(text=fit_text(text, T.font(12), 520), text_color=T.MUTED)
+        self._status("Searching YouTube Music…" if self.spotify.searching else "Downloading songs…",
+                     f"{text}  ·  {fraction * 100:.0f}%")
 
     def job_started(self, cancel: threading.Event) -> None:
         self._job_cancel = cancel
         self.busy = True
         self.app.set_busy(True)
+        self.mode.set_locked(True)
         set_primary_enabled(self.dl_btn, False)
+        self.open_btn.grid_remove()
         self.cancel_btn.grid()
         self.cancel_btn.configure(state="normal", text="Cancel", image=T.icon("stop", 15, T.ERROR))
         self.bar.grid()
@@ -432,10 +520,11 @@ class DownloadView(ctk.CTkFrame):
     def job_finished(self, text: str, colour, check: tuple[str, str] | None = None) -> None:
         self.busy = False
         self.app.set_busy(False)
+        self.mode.set_locked(False)
         self.cancel_btn.grid_remove()
         self.bar.glide(1.0)
-        self.after(800, self.bar.grid_remove)
-        self.status.configure(text=text, text_color=colour)
+        self.after(800, lambda: self.busy or self.bar.grid_remove())
+        self.set_status(text, colour)
         if check:
             self._show_check(*check)
         set_primary_enabled(self.dl_btn, self.url_ok)
@@ -463,30 +552,34 @@ class DownloadView(ctk.CTkFrame):
                     self._validate()
                 elif kind == "progress":
                     self.bar.glide(ev[1])
-                    self.status.configure(text=fit_text(f"{ev[2]}  ·  {ev[1] * 100:.0f}%", T.font(12), 520),
-                                          text_color=T.MUTED)
+                    title = "Finishing…" if ev[2] in ("Processing", "Done") else "Downloading…"
+                    self._status(title, f"{ev[2]}  ·  {ev[1] * 100:.0f}%")
                 elif kind in ("done", "failed", "cancelled"):
                     self.busy = False
                     self.app.set_busy(False)
+                    self.mode.set_locked(False)
                     self.cancel_btn.grid_remove()
                     if kind == "done":
                         self.bar.glide(1.0)
                         for f in ev[1]:
                             self._add_history(f)
                         n = len(ev[1])
-                        self.status.configure(text=f"Saved {n} file{'s' if n != 1 else ''} to {self.dl_dir.name}.",
-                                              text_color=T.SUCCESS)
+                        self.last_saved = ev[1][-1]
                         self.entry.delete(0, "end")
                         self._show_check(None, "")
+                        self.playlist.grid_remove()
+                        what = ev[1][0].name if n == 1 else f"{n} files"
+                        self.open_btn.grid()
+                        self._status("Download complete", f"Saved {what} to {self.dl_dir.name or self.dl_dir}.", T.SUCCESS)
                         self.app.notify_done(n, 0)
                     elif kind == "failed":
                         self.bar.jump(0)
-                        self.status.configure(text="Download failed.", text_color=T.ERROR)
+                        self._status("Download failed", ev[1], T.ERROR)
                         self._show_check("error", ev[1])
                     else:
                         self.bar.jump(0)
-                        self.status.configure(text="Download cancelled. Partial files were removed.", text_color=T.MUTED)
-                    self.after(800, self.bar.grid_remove)
+                        self._status("Download cancelled", "Nothing was kept: the unfinished file was removed.")
+                    self.after(800, lambda: self.busy or self.bar.grid_remove())
                     self.url_ok = bool(self._clean_url())
                     # Keep the result message on screen; only re-enable the button if a link is still entered.
                     if kind == "done":
@@ -495,7 +588,7 @@ class DownloadView(ctk.CTkFrame):
                         set_primary_enabled(self.dl_btn, self.url_ok)
         except queue.Empty:
             pass
-        self.after(80, self._drain)
+        self._drain_job = self.after(80 if self.busy else 200, self._drain)
 
     # ------------------------------------------------------------------ history
 

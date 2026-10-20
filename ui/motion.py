@@ -1,8 +1,9 @@
 """Small, restrained animations: easing, colour fades, expand/collapse and slides.
 
-Everything runs on Tk's event loop with `after`, timed by the clock rather than by frame count, so a busy
-moment shortens an animation instead of dragging it out. When animations are off (the in-app switch, or
-Windows' "Animation effects" setting), every helper jumps straight to the end state.
+Everything runs on Tk's event loop with `after`, timed by the clock rather than by frame count. If the loop
+stalls for longer than a few frames (a big repaint, for example), the stall counts as a pause, so the animation
+carries on from where it was instead of jumping ahead. When animations are off (the in-app switch, or the
+system's reduce-motion setting), every helper jumps straight to the end state.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from typing import Callable
 import customtkinter as ctk
 
 FRAME_MS = 15
+STALL_MS = 45
 FAST, NORMAL, SLOW = 120, 180, 260
 
 _enabled = True
@@ -66,8 +68,17 @@ def ease_out(t: float) -> float:
     return 1 - (1 - t) ** 3
 
 
+def ease_out_quart(t: float) -> float:
+    """Quick to leave, long gentle arrival: for things that travel, like a segmented control's pill."""
+    return 1 - (1 - t) ** 4
+
+
 def ease_in_out(t: float) -> float:
     return 4 * t ** 3 if t < 0.5 else 1 - (-2 * t + 2) ** 3 / 2
+
+
+def running(widget, key: str) -> bool:
+    return (str(widget), key) in _jobs
 
 
 def cancel(widget, key: str) -> None:
@@ -90,14 +101,18 @@ def animate(widget, key: str, duration: int, step: Callable[[float], None],
         if done:
             done()
         return
-    start = time.perf_counter()
+    clock = {"start": time.perf_counter(), "last": time.perf_counter()}
 
     def tick() -> None:
         try:
             if not widget.winfo_exists():
                 _jobs.pop(ident, None)
                 return
-            t = min(1.0, (time.perf_counter() - start) * 1000 / duration)
+            now = time.perf_counter()
+            if now - clock["last"] > STALL_MS / 1000:  # treat a stall as a pause
+                clock["start"] += now - clock["last"] - FRAME_MS / 1000
+            clock["last"] = now
+            t = min(1.0, (now - clock["start"]) * 1000 / duration)
             step(ease(t))
             if t < 1.0:
                 _jobs[ident] = widget.after(FRAME_MS, tick)
@@ -294,14 +309,6 @@ def collapse(frame, duration: int = NORMAL, done=None) -> None:
 
 
 # ----------------------------------------------------------------------------- position and opacity
-
-
-def slide_in(widget, dx: int = 28, duration: int = SLOW, **place_kw) -> None:
-    """Place a widget a little to one side and glide it into position."""
-    def step(t: float) -> None:
-        widget.place(x=round(dx * (1 - t)), **place_kw)
-
-    animate(widget, "slide", duration, step)
 
 
 def window_fade_in(window, duration: int = 220) -> None:
