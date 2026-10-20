@@ -12,7 +12,6 @@ Free, open source and private: everything runs on your own computer.</p>
       <img src="docs/download-light.svg" width="232" height="40" alt="Download for Windows">
     </picture>
   </a>
-<!-- MAC-HIDDEN until release 3.3.0 publishes the Mac files
   &nbsp;
   <a href="https://github.com/anglerequip/media-converter/releases/latest/download/MediaConverter-mac-apple-silicon.dmg">
     <picture>
@@ -20,12 +19,11 @@ Free, open source and private: everything runs on your own computer.</p>
       <img src="docs/download-mac-light.svg" width="200" height="40" alt="Download for Mac">
     </picture>
   </a>
-MAC-HIDDEN -->
 </p>
-<p align="center"><sub>Windows 10 and 11: <code>MediaConverter-Setup.exe</code>, about 95 MB &nbsp;·&nbsp; a Mac version is coming in the next release
+<p align="center"><sub>Windows 10 and 11: <code>MediaConverter-Setup.exe</code>, about 43 MB &nbsp;·&nbsp; macOS 11 or later: about 44 MB (Apple silicon) or 51 MB (<a href="https://github.com/anglerequip/media-converter/releases/latest/download/MediaConverter-mac-intel.dmg">Intel</a>), everything included
 <br>All files, the portable Windows version and release notes: <a href="https://github.com/anglerequip/media-converter/releases/latest">GitHub Releases</a></sub></p>
 
-<p align="center"><img src="docs/screenshot.png" width="760" alt="Media Converter after converting four files to MP4, with the format choices on the right"></p>
+<p align="center"><img src="docs/screenshot.png" width="760" alt="Media Converter in dark mode after converting four iPhone and Android photos to JPG, with the format choices on the right"></p>
 
 ## Features
 
@@ -37,7 +35,8 @@ MAC-HIDDEN -->
 - **No needless re-encoding:** MKV → MP4 and similar changes are instant and lossless
 - **Batches:** drag in files or whole folders and see progress and space saved
 - **Works offline:** files are converted on your PC and never uploaded; the app never updates itself or connects in the background, and goes online only when you download from a link
-- **Light and dark mode** and smooth animations
+- **Light and dark mode** and smooth animations that follow your system's reduce-motion setting
+- **Keyboard friendly:** every control works with Tab, Space and Enter; Ctrl+O adds files, Ctrl+Enter converts, Esc cancels
 
 ## Install
 
@@ -47,13 +46,11 @@ MAC-HIDDEN -->
 2. If Windows shows *"Windows protected your PC"*, click **More info → Run anyway**. This appears because the app isn't signed with a paid certificate.
 3. Open **Media Converter** from the Start menu or the Desktop.
 
-<!-- MAC-HIDDEN until release 3.3.0
 **Mac**
 
 1. Click **Download for Mac** above. Not sure which Mac you have? Apple menu → **About This Mac**: "Chip: Apple M…" means Apple silicon, "Processor: Intel" means Intel.
 2. Open the downloaded `.dmg` and drag **Media Converter** into **Applications**.
 3. The first time you open it, macOS says it can't check the developer, because the app isn't registered with Apple (that costs $99 a year). Open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to Media Converter. On macOS 14 and older you can instead right-click the app and choose **Open**. After that it opens normally.
-MAC-HIDDEN -->
 
 The app never updates itself. For a newer version, download it again from this page; installing over the old one keeps your settings.
 
@@ -66,12 +63,14 @@ Drop files in, pick a format and press **Convert Files**. To save a video, paste
 
 | Level | Images | Video | Audio |
 |---|---|---|---|
-| **Maximum** (default) | JPG 100 (4:4:4), lossless WebP, AVIF/HEIC 100 | H.264 CRF 14 / H.265 CRF 16 / AV1 CRF 20 | MP3 320k, AAC 320k, Opus 256k |
+| **Maximum** (default) | JPG 98 (4:4:4), lossless WebP, AVIF/HEIC 100 | H.264 CRF 14 / H.265 CRF 16 / AV1 CRF 20 | MP3 320k, AAC 320k, Opus 256k |
 | High | JPG 95, WebP 95 | CRF 18 / 21 / 27 | MP3 V0, AAC 256k |
 | Balanced | JPG 88, WebP 85 | CRF 23 / 26 / 34 | MP3 V2, AAC 192k |
 | Smaller | JPG 75, WebP 75 | CRF 28 / 30 / 42 | MP3 V5, AAC 128k |
-| Lossless (Advanced) | PNG/TIFF/WebP lossless | x264 / x265 / AV1 lossless | ALAC / FLAC |
+| Lossless (Advanced) | PNG/TIFF/WebP lossless, JPG 100 | x264 / x265 / AV1 lossless | ALAC / FLAC |
 
+- JPG at Maximum uses quality 98: on real phone photos it measures the same as 100 to the eye (46–54 dB PSNR) and is 30–40% smaller.
+- A converted file can be larger than the original: HEIC and AVIF photos, for example, are about twice as efficient as JPG. Each finished file shows how its size changed.
 - Size and frame rate are kept unless you set a maximum; files are never enlarged.
 - GIFs use a two-pass palette; at Maximum every frame gets its own 256 colours.
 - Photos keep their colour profile and EXIF data and are turned upright.
@@ -114,7 +113,7 @@ cd media-converter
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
-Build the installer and portable zip exactly like the release (needs only Python 3.12; FFmpeg and Inno Setup are downloaded from pinned addresses and checked by SHA-256, Python libraries come from the hash-locked `build/requirements-lock.txt`):
+Build the installer and portable zip exactly like the release (needs only Python 3.12; FFmpeg and Inno Setup are downloaded from pinned addresses and checked by SHA-256, Python libraries come from the hash-locked `build/requirements-lock.txt`). FFmpeg itself is built from source by [`build/ffmpeg/build-ffmpeg.sh`](build/ffmpeg/build-ffmpeg.sh) with exactly the codecs the app uses, from pinned, checksum-verified sources; its [workflow](.github/workflows/ffmpeg.yml) publishes the result together with the complete source code:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File build\build.ps1
