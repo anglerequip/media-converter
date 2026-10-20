@@ -24,7 +24,7 @@ from ui import motion as M
 from ui import theme as T
 from ui.convert_view import ConvertView
 from ui.download_view import DownloadView
-from ui.widgets import DetailsLoader, Segmented, Tooltip, fit_text, ghost_button
+from ui.widgets import DetailsLoader, Segmented, Tooltip, fit_text, ghost_button, make_focusable
 
 APP_DIR = Path(__file__).resolve().parent
 if sys.platform == "win32":
@@ -380,12 +380,14 @@ class App(ctk.CTk):
         if self.settings.get("animations", True):
             anim.select()
         anim.grid(row=2, column=0, sticky="w", padx=16)
+        make_focusable(anim)
         anim_note = note(c, "", row=3)
 
         def describe_motion() -> None:
             if not self.system_motion:
-                anim_note.configure(text="Windows' 'Animation effects' setting is off, so the app stays still too.",
-                                    text_color=T.MUTED)
+                setting = ("macOS's Reduce motion setting is on" if sys.platform == "darwin"
+                           else "Windows' Animation effects setting is off")
+                anim_note.configure(text=f"{setting}, so the app stays still too.", text_color=T.MUTED)
             else:
                 anim_note.configure(text="Smooth fades and slides. Turn off for a completely still interface.",
                                     text_color=T.MUTED)
@@ -407,16 +409,18 @@ class App(ctk.CTk):
         except Exception:
             version = "not installed"
         note(c, f"yt-dlp {version} is built in. Media Converter never updates itself or anything else; if downloads "
-                "from a site stop working, download the newest Media Converter from the project page.")
+                "from a site stop working, download the newest Media Converter from the project page.").grid_configure(
+            pady=(0, 14))
 
         c = card(2, "FFmpeg")
         ff = find_tool("ffmpeg")
         if ff:
             note(c, "Installed. Used for video, audio and animations.", T.SUCCESS)
             path_lbl = note(c, fit_text(ff, T.font(11), 380), T.FAINT, row=2)
+            path_lbl.grid_configure(pady=(0, 14))
             Tooltip(path_lbl, ff)
         else:
-            note(c, f"Not found. {install_hint()}", T.ERROR)
+            note(c, f"Not found. {install_hint()}", T.ERROR).grid_configure(pady=(0, 14))
 
         c = card(3, "About")
         note(c, f"Media Converter {__version__}. Works offline: files are converted on this computer and never "

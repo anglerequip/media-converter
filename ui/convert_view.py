@@ -18,7 +18,7 @@ from converter.formats import (
 from . import motion as M
 from . import theme as T
 from .widgets import (
-    DashedPanel, FileItem, Segmented, VirtualFileList, icon_circle, thumb_tile, SmoothProgress, Tooltip, chip, fit_text, ghost_button, human_size,
+    DashedPanel, FileItem, Segmented, VirtualFileList, icon_circle, make_focusable, scaling, thumb_tile, SmoothProgress, Tooltip, chip, fit_text, ghost_button, human_size,
     primary_button, secondary_button, set_primary_enabled, style_chip,
 )
 
@@ -83,6 +83,7 @@ def option_menu(parent, values, command, value) -> ctk.CTkOptionMenu:
         dropdown_fg_color=T.SURFACE, dropdown_hover_color=T.ACCENT_SOFT, dropdown_text_color=T.TEXT,
     )
     m.set(value)
+    make_focusable(m)
     return m
 
 
@@ -92,11 +93,25 @@ def switch(parent, text: str, value: bool, command) -> ctk.CTkSwitch:
                       fg_color=T.BORDER_STRONG, switch_width=38, switch_height=20)
     if value:
         s.select()
+    make_focusable(s)
     return s
 
 
-def help_text(parent, text: str = "", colour=T.MUTED) -> ctk.CTkLabel:
-    return ctk.CTkLabel(parent, text=text, font=T.font(11), text_color=colour, justify="left", anchor="w", wraplength=270)
+def help_text(parent, text: str = "", colour=T.MUTED, indent: int = 0) -> ctk.CTkLabel:
+    """A muted explanation that wraps to the width its container actually has (minus `indent`, the label's own left
+    and right padding), so it never runs past the edge of the panel at any window size."""
+    label = ctk.CTkLabel(parent, text=text, font=T.font(11), text_color=colour, justify="left", anchor="w",
+                         wraplength=260)
+    label._mc_wrap = 260
+
+    def rewrap(_e=None) -> None:
+        width = round(parent.winfo_width() / scaling(parent)) - indent - 4
+        if width > 80 and abs(width - label._mc_wrap) > 2:
+            label._mc_wrap = width
+            label.configure(wraplength=width)
+
+    parent.bind("<Configure>", rewrap, add="+")
+    return label
 
 
 def section_title(parent, text: str) -> ctk.CTkLabel:
@@ -209,7 +224,8 @@ class ConvertView(ctk.CTkFrame):
         self.banner_icon.grid(row=0, column=0, rowspan=2, padx=(14, 10), pady=12)
         self.banner_title = ctk.CTkLabel(self.banner, text="", font=T.font(14, "semibold"), anchor="w", height=20)
         self.banner_title.grid(row=0, column=1, sticky="sw", pady=(12, 0))
-        self.banner_detail = ctk.CTkLabel(self.banner, text="", font=T.font(12), text_color=T.MUTED, anchor="w", height=18)
+        self.banner_detail = ctk.CTkLabel(self.banner, text="", font=T.font(12), text_color=T.MUTED, anchor="w", height=18,
+                                          justify="left")
         self.banner_detail.grid(row=1, column=1, sticky="nw", pady=(0, 12))
         self.banner_open = secondary_button(self.banner, "Open Output Folder", self.open_output, icon_name="folder_open")
         self.banner_open.grid(row=0, column=2, rowspan=2, padx=4)
@@ -217,6 +233,8 @@ class ConvertView(ctk.CTkFrame):
         self.banner_more.grid(row=0, column=3, rowspan=2, padx=(4, 6))
         self.banner_close = ghost_button(self.banner, icon_name="close", command=self.hide_banner)
         self.banner_close.grid(row=0, column=4, rowspan=2, padx=(0, 8))
+        self._banner_title_text = ""
+        self.banner.bind("<Configure>", self._fit_banner_text, add="+")
 
         self.drop = DropZone(left, self.choose_files, self.choose_folder)
         self.drop.grid(row=1, column=0, sticky="nsew")
@@ -255,11 +273,9 @@ class ConvertView(ctk.CTkFrame):
         self.format_card.grid_columnconfigure(0, weight=1)
         self.format_name = ctk.CTkLabel(self.format_card, text="", font=T.font(12, "semibold"), text_color=T.TEXT, anchor="w")
         self.format_name.grid(row=0, column=0, sticky="w", padx=10, pady=(8, 0))
-        self.format_desc = help_text(self.format_card)
-        self.format_desc.configure(wraplength=262)
+        self.format_desc = help_text(self.format_card, indent=20)
         self.format_desc.grid(row=1, column=0, sticky="w", padx=10)
-        self.format_cover = help_text(self.format_card)
-        self.format_cover.configure(wraplength=262)
+        self.format_cover = help_text(self.format_card, indent=20)
         self.format_cover.grid(row=2, column=0, sticky="w", padx=10, pady=(2, 8))
 
         # -- quality
@@ -340,18 +356,19 @@ class ConvertView(ctk.CTkFrame):
             compound="right", command=self.toggle_advanced, border_spacing=2,
         )
         self.adv_toggle.grid(row=0, column=0, sticky="ew")
+        make_focusable(self.adv_toggle)
         self.adv_body = ctk.CTkFrame(self.sec_adv, fg_color="transparent")
         self.adv_body.grid_columnconfigure(0, weight=1)
         self.sw_copy = switch(self.adv_body, "Keep original streams", self.s.get("keep_streams", True),
                               lambda: self._set("keep_streams", bool(self.sw_copy.get())))
         self.sw_copy.grid(row=0, column=0, sticky="w", pady=(6, 0))
         help_text(self.adv_body, "Copies video and audio without re-encoding when the new format can hold them "
-                                 "(for example MKV to MP4). Instant and lossless.").grid(row=1, column=0, sticky="w", padx=(46, 0))
+                                 "(for example MKV to MP4). Instant and lossless.", indent=46).grid(row=1, column=0, sticky="w", padx=(46, 0))
         self.sw_lossless = switch(self.adv_body, "Lossless mode", self.s.get("lossless", False),
                                   lambda: self._set("lossless", bool(self.sw_lossless.get())))
         self.sw_lossless.grid(row=2, column=0, sticky="w", pady=(12, 0))
         help_text(self.adv_body, "No quality loss at all where the format allows it. Files get very large. "
-                                 "Overrides the quality setting.").grid(row=3, column=0, sticky="w", padx=(46, 0))
+                                 "Overrides the quality setting.", indent=46).grid(row=3, column=0, sticky="w", padx=(46, 0))
         ctk.CTkLabel(self.adv_body, text="Fill for transparent areas", font=T.font(12, "semibold"), text_color=T.TEXT,
                      anchor="w").grid(row=4, column=0, sticky="w", pady=(12, 4))
         self.bg = Segmented(self.adv_body, [("white", "White", None, None), ("black", "Black", None, None)],
@@ -585,6 +602,8 @@ class ConvertView(ctk.CTkFrame):
         if signature != self._signature:
             self._signature = signature
             self._build_chips(union, moving, suggested)
+            # New choices: bring them into view, wherever the panel was scrolled to before.
+            self.after_idle(lambda: self.settings_panel._parent_canvas.yview_moveto(0.0))
         else:
             for t, buttons in self.chips.items():
                 for b in buttons:
@@ -913,11 +932,13 @@ class ConvertView(ctk.CTkFrame):
         bg, fg, icon_name = styles[tone]
         self.banner.configure(fg_color=bg, border_color=bg)
         self.banner_icon.configure(image=T.icon(icon_name, 26, fg))
+        self._banner_title_text = title
         self.banner_title.configure(text=title, text_color=T.TEXT)
         self.banner_detail.configure(text=detail)
         for b in (self.banner_open, self.banner_more):
             M.paint(b, 0, fg_color=T.SURFACE)
         self.banner_open.grid() if self.last_output else self.banner_open.grid_remove()
+        self.after_idle(self._fit_banner_text)
         if self.banner.winfo_ismapped():  # possibly mid-collapse: stop that and show it fully
             M.cancel(self.banner, "height")
             self.banner.grid_propagate(True)
@@ -929,6 +950,17 @@ class ConvertView(ctk.CTkFrame):
             M.expand(self.banner, target)
         else:
             self.banner.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+
+    def _fit_banner_text(self, _e=None) -> None:
+        """Fit the banner's title, and wrap its detail line, into the room left beside the buttons, so neither is
+        cut off at small window sizes."""
+        k = scaling(self)
+        buttons = sum(b.winfo_reqwidth() for b in (self.banner_open, self.banner_more, self.banner_close)
+                      if b.winfo_manager()) / k
+        room = self.banner.winfo_width() / k - buttons - (14 + 36 + 10) - (8 + 10 + 8) - 12
+        if room > 80:
+            self.banner_detail.configure(wraplength=room)
+            self.banner_title.configure(text=fit_text(self._banner_title_text, T.font(14, "semibold"), room, end=True))
 
     def hide_banner(self) -> None:
         if self.banner.winfo_ismapped() and M.enabled():

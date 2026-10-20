@@ -30,6 +30,8 @@ WizardStyle=modern
 ; Installing over a running copy closes it first, so no file is left half-replaced.
 CloseApplications=force
 RestartApplications=no
+; Tell Windows to refresh its icon cache, so the new icon replaces any cached old one straight away.
+ChangesAssociations=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 VersionInfoVersion={#AppVersion}

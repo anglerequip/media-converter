@@ -25,7 +25,17 @@ _jobs: dict[tuple[str, str], str] = {}
 
 
 def system_allows_animation() -> bool:
-    """Windows' Settings > Accessibility > Visual effects > Animation effects."""
+    """Windows' Settings > Accessibility > Visual effects > Animation effects, or macOS's Accessibility > Display >
+    Reduce motion."""
+    if sys.platform == "darwin":
+        try:
+            import subprocess
+
+            out = subprocess.run(["/usr/bin/defaults", "read", "com.apple.universalaccess", "reduceMotion"],
+                                 capture_output=True, text=True, timeout=2).stdout.strip()
+            return out != "1"
+        except Exception:
+            return True
     if sys.platform != "win32":
         return True
     try:

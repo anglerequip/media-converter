@@ -25,7 +25,8 @@ from converter.ffmpeg_tools import Cancelled, ConversionError
 
 from . import motion as M
 from . import theme as T
-from .widgets import Tooltip, fit_text, ghost_button, human_duration, icon_circle, primary_button, secondary_button
+from .widgets import (Tooltip, fit_text, ghost_button, human_duration, icon_circle, make_focusable, primary_button,
+                      secondary_button)
 
 INFO_TITLE = "Spotify songs can't be downloaded directly"
 INFO_TEXT = (
@@ -61,6 +62,7 @@ class InfoDialog(ctk.CTkToplevel):
                                          checkbox_width=18, checkbox_height=18, border_width=2, corner_radius=4,
                                          fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER, border_color=T.BORDER_STRONG)
         self.dont_show.grid(row=2, column=1, sticky="w", pady=(16, 0))
+        make_focusable(self.dont_show)
 
         buttons = ctk.CTkFrame(self, fg_color="transparent")
         buttons.grid(row=3, column=0, columnspan=2, sticky="e", padx=22, pady=(18, 20))
@@ -154,6 +156,7 @@ class MatchCard(ctk.CTkFrame):
                                   border_width=2, corner_radius=5, fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
                                   border_color=T.BORDER_STRONG)
             box.grid(row=0, column=2, rowspan=4, padx=(8, 12))
+            make_focusable(box)
             Tooltip(box, "Include this song")
 
 

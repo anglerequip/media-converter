@@ -71,24 +71,46 @@ def fit_text(text: str, fnt: ctk.CTkFont, max_px: float, end: bool = False) -> s
     return head[:lo].rstrip() + "…" + tail
 
 
-def make_focusable(button: ctk.CTkButton, ring: tuple[str, str] = T.FOCUS) -> None:
-    """Let Tab reach a CTkButton, draw a focus ring, and activate it with Enter or Space."""
-    canvas = button._canvas  # CTk draws buttons on a canvas; it is the widget that can take focus
-    canvas.configure(takefocus=1)
+def make_focusable(button, ring: tuple[str, str] = T.FOCUS) -> None:
+    """Let Tab reach a CTk button, switch, check box or drop-down menu, show a focus ring, and work it with Enter or
+    Space. Only keyboard focus shows the ring: clicking these widgets never gives them focus."""
+    canvas = button._canvas  # CTk draws these on a canvas; it is the widget that can take focus
+
+    def enabled() -> bool:
+        return button.cget("state") != "disabled" and getattr(button, "_mc_enabled", True)
+
+    # Tab skips disabled and hidden controls.
+    canvas.configure(takefocus=lambda _name: 1 if enabled() and canvas.winfo_viewable() else 0)
+    menu = isinstance(button, ctk.CTkOptionMenu)  # has no border, so its text turns the ring colour instead
+    key = "text_color" if menu else "border_color"
     state = {"width": None, "colour": None}
 
     def focus_in(_e):
-        state["width"] = button.cget("border_width")
-        state["colour"] = button.cget("border_color")
-        button.configure(border_width=2, border_color=ring)
+        state["colour"] = button.cget(key)
+        if menu:
+            button.configure(text_color=ring)
+        else:
+            state["width"] = button.cget("border_width")
+            button.configure(border_width=2, border_color=ring)
 
     def focus_out(_e):
-        if state["width"] is not None:
-            button.configure(border_width=state["width"], border_color=state["colour"])
+        if state["colour"] is None:
+            return
+        changes = {"border_width": state["width"]} if not menu else {}
+        if button.cget(key) == ring:  # restore the colour only if nothing restyled the widget meanwhile
+            changes[key] = state["colour"]
+        if changes:
+            button.configure(**changes)
+        state["colour"] = None
 
     def activate(_e):
-        if button.cget("state") != "disabled" and getattr(button, "_mc_enabled", True):
-            button.invoke()
+        if enabled():
+            if menu:
+                button._open_dropdown_menu()
+            elif isinstance(button, (ctk.CTkSwitch, ctk.CTkCheckBox)):
+                button.toggle()
+            else:
+                button.invoke()
         return "break"
 
     canvas.bind("<FocusIn>", focus_in, add="+")
@@ -700,14 +722,24 @@ class FileRow(ctk.CTkFrame):
         self._show_state(animate=same)
 
     def _fit_name(self) -> None:
+        """Shorten the file name to the room left beside the status badge and its result line, measured from the
+        text itself, so the name never runs under them, whatever state the row is in."""
         if self.item is None:
             return
-        avail = self.name.winfo_width()
-        if avail > 10 and avail != self._name_width:
-            self._name_width = avail
-            self.name.configure(text=fit_text(self.item.path.name, T.font(13, "semibold"), avail / scaling(self) - 4))
-        elif avail <= 10:
+        k = scaling(self)
+        row = self.winfo_width() / k
+        if row <= 50:  # not laid out yet
             self.name.configure(text=self.item.path.name)
+            return
+        side = max(T.font(11, "semibold").measure(self.status.cget("text")) + 12,  # + the badge's rounded ends
+                   T.font(11).measure(self.result.cget("text")))
+        # thumbnail column (10 + 44 + 12), status column padding (8 + 4), action button and its padding, some air
+        reserved = 66 + 12 + self.action.winfo_reqwidth() / k + 8 + 10
+        avail = row - reserved - side
+        key = (round(avail), self.item.path.name)
+        if key != self._name_width:
+            self._name_width = key
+            self.name.configure(text=fit_text(self.item.path.name, T.font(13, "semibold"), avail))
 
     def _show_state(self, animate: bool) -> None:
         item = self.item
@@ -752,6 +784,7 @@ class FileRow(ctk.CTkFrame):
             self.action.configure(image=T.icon("close", 15, T.MUTED), state="disabled" if self.locked else "normal")
             self.action_tip.set("Remove from list")
         self._shown_state = key
+        self._fit_name()  # the badge and result line may have grown or shrunk
 
     # -- interaction
 

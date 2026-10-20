@@ -6,11 +6,12 @@ Outputs (assets/):
     icon.svg       editable vector master
     icon-1024.png  1024 px raster master
     icon.png       512 px, used inside the app and in the README
-    icon.ico       Windows: 16, 20, 24, 32, 40, 48, 64, 72, 96, 128 and 256 px
+    icon.ico       Windows: 15 sizes from 16 to 256 px
     icon.icns      macOS: 16 to 1024 px, with Apple's transparent margin
 
-Design: a midnight-graphite tile; a luminous-blue file card behind a white document with a folded corner (one file
-becoming another); on the document a blue play mark (media), framed by two conversion arrows at larger sizes.
+Design (black, grey and white): a near-black tile; a grey file card behind a white document with a folded corner
+(one file becoming another); on the document a black play mark (media), framed by two conversion arrows at larger
+sizes.
 Every raster size is drawn separately at 4x and scaled down, and details that would smear (the fold, the arrows,
 the shadow) are left out at the sizes where they can't be read. At 16 px only the two cards and the play mark remain.
 """
@@ -23,18 +24,19 @@ from pathlib import Path
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 ROOT = Path(__file__).resolve().parent.parent
-ICO_SIZES = [16, 20, 24, 32, 40, 48, 64, 72, 96, 128, 256]
+# Every size Windows asks for at 100-200% display scaling, so it never has to resize one (resizing is what blurs).
+ICO_SIZES = [16, 20, 24, 30, 32, 36, 40, 48, 60, 64, 72, 80, 96, 128, 256]
 ICNS_SIZES = [16, 32, 64, 128, 256, 512, 1024]
 SS = 4  # supersampling
 
 # ----------------------------------------------------------------------------- the design, in units of the canvas (0..1)
 
-TILE_TOP, TILE_BOTTOM = (28, 42, 66), (13, 21, 36)        # midnight graphite blue
-TILE_EDGE = (52, 72, 104)                                   # fine lighter edge so the tile holds on dark taskbars
-BLUE_TOP, BLUE_BOTTOM = (90, 170, 246), (47, 123, 216)      # luminous blue card / accent
-WHITE = (246, 249, 253)
-FOLD = (196, 212, 233)
-ACCENT = (57, 135, 215)                                      # #3987D7
+TILE_TOP, TILE_BOTTOM = (40, 41, 44), (12, 12, 14)        # near-black graphite
+TILE_EDGE = (74, 76, 81)                                    # fine lighter edge so the tile holds on dark taskbars
+BLUE_TOP, BLUE_BOTTOM = (150, 153, 159), (104, 107, 114)    # the card behind: mid grey
+WHITE = (247, 247, 248)
+FOLD = (198, 200, 205)
+ACCENT = (22, 23, 26)                                        # arrows and play mark: near-black on the white document
 
 TILE_INSET, TILE_RADIUS = 0.035, 0.225
 CARD_W, CARD_H, CARD_R = 0.40, 0.50, 0.065
@@ -51,7 +53,7 @@ def _details(size: int) -> dict:
     """Which details appear at a given pixel size."""
     return {
         "fold": size >= 32,
-        "arrows": size >= 64,
+        "arrows": size >= 72,  # below this they crowd the play mark
         "shadow": size >= 48,
         "edge": True,
         "play_scale": 1.45 if size <= 24 else 1.2 if size < 64 else 1.0,
