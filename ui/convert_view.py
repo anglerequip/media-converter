@@ -60,7 +60,7 @@ QUALITY_TEXT = {
     "small": "Smallest files. Some quality loss is visible up close.",
     "balanced": "Good quality at a moderate size. Fine for sharing.",
     "high": "Very close to the original, with larger files.",
-    "max": "Best possible quality. Files are the largest.",
+    "max": "Highest quality, with no visible loss. Files are the largest; Lossless mode (Advanced) goes further.",
 }
 CODEC_TEXT = {
     "h264": "H.264 plays on every phone, TV, browser and editor.",
@@ -287,7 +287,7 @@ class ConvertView(ctk.CTkFrame):
             [("small", "Smaller", "Smallest files, some visible quality loss", None),
              ("balanced", "Balanced", "Good quality at a moderate size", None),
              ("high", "High", "Very close to the original", None),
-             ("max", "Maximum", "Best possible quality, largest files", None)],
+             ("max", "Maximum", "Highest quality, largest files", None)],
             command=lambda v: self._set("quality", v), value=self.s.get("quality", "max"), font_size=11,
         )
         self.quality.grid(row=1, column=0, sticky="ew")

@@ -21,7 +21,7 @@ OutputBaseFilename=MediaConverter-Setup
 SetupIconFile=..\assets\icon.ico
 UninstallDisplayIcon={app}\MediaConverter.exe
 UninstallDisplayName=Media Converter
-Compression=lzma2/max
+Compression=lzma2/ultra64
 SolidCompression=yes
 ; Compress in a separate process: the compiler itself runs out of memory on ~400 MB of input.
 LZMAUseSeparateProcess=yes
