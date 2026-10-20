@@ -530,6 +530,10 @@ class ConvertView(ctk.CTkFrame):
 
     def _details_ready(self, item: FileItem, thumb, details: dict) -> None:
         item.details = details
+        if details.get("error") and item.state == "ready" and not self.busy:
+            # Damaged or mislabelled: say so now, and leave it out, rather than let it fail during the conversion.
+            item.state, item.error = "unreadable", details["error"]
+            self.refresh()
         if thumb is not None:
             item.tile = thumb_tile(thumb, item.kind)
             self.list.remember_tile(item)
@@ -581,12 +585,13 @@ class ConvertView(ctk.CTkFrame):
         self.queue_count.configure(text=f"{n} file{'s' if n != 1 else ''}  ·  {human_size(total)}" if n else "")
 
     def show_error(self, card: FileItem) -> None:
-        messagebox.showerror("Conversion failed", f"{card.path.name}\n\n{card.error}", parent=self)
+        title = "This file can't be read" if card.state == "unreadable" else "Conversion failed"
+        messagebox.showerror(title, f"{card.path.name}\n\n{card.error}", parent=self)
 
     # ================================================================== refresh (format choices + status)
 
     def _available(self):
-        cards = [c for c in self.cards if c.kind]
+        cards = [c for c in self.cards if c.kind and c.state != "unreadable"]
         union: list[str] = []
         for c in cards:
             for t in targets_for(c.path, c.kind):
@@ -772,6 +777,26 @@ class ConvertView(ctk.CTkFrame):
         # with the other headings, and give its contents those 9 px back.
         self.sec_adv.grid_configure(pady=(18, 12), padx=(1, 8))
 
+    def _lock_settings(self, locked: bool) -> None:
+        """While files convert, the settings can't change: they wouldn't apply to the running job, which is confusing."""
+        if locked:
+            self._locked_states = {}
+
+            def walk(widget) -> None:
+                for w in widget.winfo_children():
+                    if isinstance(w, (ctk.CTkButton, ctk.CTkSwitch, ctk.CTkOptionMenu)):
+                        self._locked_states[w] = w.cget("state")
+                        w.configure(state="disabled")
+                    walk(w)
+
+            walk(self.settings_panel)
+            self.detected.configure(text="Settings are locked until the conversion finishes.")
+        else:
+            for w, state in getattr(self, "_locked_states", {}).items():
+                if w.winfo_exists():
+                    w.configure(state=state)
+            self._locked_states = {}  # refresh() puts the "Detected ..." line back
+
     def _refresh_status(self) -> None:
         if self.busy:
             return
@@ -812,7 +837,8 @@ class ConvertView(ctk.CTkFrame):
         if self.busy or not getattr(self.convert_btn, "_mc_enabled", True):
             return
         t = self.target
-        todo = [c for c in self.cards if c.kind and c.state != "done"] or [c for c in self.cards if c.kind]
+        usable = [c for c in self.cards if c.kind and c.state != "unreadable"]
+        todo = [c for c in usable if c.state != "done"] or usable
         if not t or not any(t in targets_for(c.path, c.kind) for c in todo):
             self._refresh_status()
             return
@@ -823,6 +849,7 @@ class ConvertView(ctk.CTkFrame):
         for c in todo:
             c.output, c.out_size, c.error, c.detail, c.fraction, c.state = None, 0, "", "", None, "waiting"
         self.list.set_locked(True)
+        self._lock_settings(True)
         set_primary_enabled(self.convert_btn, False)
         self.clear_btn.grid_remove()
         self.open_btn.grid_remove()
@@ -905,6 +932,7 @@ class ConvertView(ctk.CTkFrame):
         self.busy = False
         self.app.set_busy(False)
         self.list.set_locked(False)
+        self._lock_settings(False)
         self.total.glide(1.0)
         self.after(600, self.total.grid_remove)
         done, failed, skipped, cancelled = results["done"], results["failed"], results["skipped"], results["cancelled"]

@@ -594,7 +594,8 @@ def _video_frame(path: Path, at: float, cover: bool = False) -> Image.Image | No
 
 
 def load_details(path: Path, kind: str | None) -> tuple[Image.Image | None, dict]:
-    """Runs on a worker thread. Returns (thumbnail, details) for a file card."""
+    """Runs on a worker thread. Returns (thumbnail, details) for a file card. If the file can't be read at all,
+    details["error"] says why, so the list can flag it before anyone tries to convert it."""
     details: dict = {}
     thumb = None
     try:
@@ -615,9 +616,13 @@ def load_details(path: Path, kind: str | None) -> tuple[Image.Image | None, dict
                 first = ImageOps.exif_transpose(im.convert("RGBA"))
                 thumb = first
         elif kind in ("video", "audio"):
-            from converter.ffmpeg_tools import duration_of, probe
+            from converter.ffmpeg_tools import ConversionError, duration_of, probe
 
-            info = probe(path)
+            try:
+                info = probe(path)
+            except ConversionError as exc:
+                details["error"] = str(exc).split("\n\nTechnical detail")[0]
+                return None, details
             details["duration"] = duration_of(info)
             video = next((s for s in info.get("streams", []) if s.get("codec_type") == "video"
                           and not s.get("disposition", {}).get("attached_pic")), None)
@@ -628,8 +633,11 @@ def load_details(path: Path, kind: str | None) -> tuple[Image.Image | None, dict
                 thumb = _video_frame(path, min(1.0, details["duration"] / 3))
             elif cover:
                 thumb = _video_frame(path, 0, cover=True)
+    except Image.DecompressionBombError:
+        details["error"] = "This image is far larger than any real photo (over 500 megapixels), so it isn't opened."
     except Exception:
-        pass
+        if kind in ("image", "animation"):  # Pillow couldn't decode it (a video thumbnail failing is harmless)
+            details["error"] = "This image is damaged, or it isn't really the type its extension says."
     return thumb, details
 
 
@@ -681,6 +689,7 @@ STATUS_STYLE = {
     "skipped": ("Skipped", T.WARNING, T.WARNING_SOFT),
     "cancelled": ("Cancelled", T.MUTED, T.SURFACE_ALT),
     "unsupported": ("Not supported", T.WARNING, T.WARNING_SOFT),
+    "unreadable": ("Can't be read", T.ERROR, T.ERROR_SOFT),
 }
 KIND_NAMES = {"image": "Image", "animation": "Animation", "video": "Video", "audio": "Audio", None: "Unknown"}
 
@@ -831,6 +840,7 @@ class FileRow(ctk.CTkFrame):
         elif self.bar.winfo_manager():
             self.bar.place_forget()
         tips = {"failed": f"{item.error}\n\nClick for full details.", "skipped": item.detail,
+                "unreadable": f"{item.error}\n\nIt will be skipped. Click for details.",
                 "unsupported": "This file type can't be converted.", "done": "Click to show the file in its folder"}
         self.status_tip.set(tips.get(item.state, ""))
         if item.state == "done" and item.output:
@@ -875,7 +885,7 @@ class FileRow(ctk.CTkFrame):
             return
         if self.item.state == "done" and self.item.output:
             self.on_reveal(self.item.output)
-        elif self.item.state == "failed":
+        elif self.item.state in ("failed", "unreadable"):
             self.on_error(self.item)
 
 

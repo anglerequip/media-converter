@@ -98,6 +98,7 @@ class DownloadView(ctk.CTkFrame):
         card = ctk.CTkFrame(self, fg_color=T.SURFACE, corner_radius=T.RADIUS_LARGE, border_width=1, border_color=T.BORDER)
         card.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         card.grid_columnconfigure(0, weight=1)
+        card.grid_rowconfigure(0, weight=1)  # fill the card, so the spacer row below puts the Download button at the bottom
         inner = self.inner = ctk.CTkFrame(card, fg_color="transparent")
         inner.grid(row=0, column=0, sticky="nsew", padx=24, pady=22)
         inner.grid_columnconfigure(0, weight=1)
