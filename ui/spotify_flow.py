@@ -26,7 +26,7 @@ from converter.ffmpeg_tools import Cancelled, ConversionError
 from . import motion as M
 from . import theme as T
 from .widgets import (Tooltip, fit_text, ghost_button, human_duration, icon_circle, make_focusable, primary_button,
-                      secondary_button)
+                      secondary_button, use_app_icon, autohide_scrollbar)
 
 INFO_TITLE = "Spotify songs can't be downloaded directly"
 INFO_TEXT = (
@@ -48,6 +48,7 @@ class InfoDialog(ctk.CTkToplevel):
         super().__init__(parent, fg_color=T.SURFACE)
         self.on_close = on_close
         self.title("About Spotify links")
+        use_app_icon(self)
         self.resizable(False, False)
         self.transient(parent.winfo_toplevel())
         self.protocol("WM_DELETE_WINDOW", lambda: self._finish(False))
@@ -209,6 +210,7 @@ class SpotifyFlow:
                                            scrollbar_button_color=T.BORDER, scrollbar_button_hover_color=T.BORDER_STRONG)
         self.list.grid(row=1, column=0, sticky="nsew")
         self.list.grid_columnconfigure(0, weight=1)
+        autohide_scrollbar(self.list)
         self.footer = ctk.CTkFrame(self.panel, fg_color="transparent")
         self.footer.grid(row=2, column=0, sticky="ew", pady=(8, 0))
         self.footer.grid_columnconfigure(0, weight=1)

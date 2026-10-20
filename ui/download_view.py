@@ -20,7 +20,7 @@ from . import theme as T
 from .convert_view import help_text, section_title, switch
 from .spotify_flow import SpotifyFlow
 from .widgets import (
-    Segmented, SmoothProgress, Tooltip, fit_text, ghost_button, human_size, primary_button,
+    Segmented, SmoothProgress, Tooltip, autohide_scrollbar, fit_text, ghost_button, human_size, primary_button,
     secondary_button, set_primary_enabled,
 )
 
@@ -201,11 +201,12 @@ class DownloadView(ctk.CTkFrame):
                                               scrollbar_button_hover_color=T.BORDER_STRONG)
         self.history.grid(row=1, column=0, sticky="nsew", padx=(8, 4), pady=(0, 10))
         self.history.grid_columnconfigure(0, weight=1)
+        autohide_scrollbar(self.history)
         self.hist_empty = ctk.CTkFrame(self.history, fg_color="transparent")
         self.hist_empty.grid(row=0, column=0, pady=40)
         ctk.CTkLabel(self.hist_empty, text="", image=T.icon("download", 30, T.FAINT)).grid(row=0, column=0)
         help_text(self.hist_empty, "Downloads from this session appear here.\nSend any of them straight to the converter.",
-                  colour=T.MUTED).grid(row=1, column=0, pady=(8, 0))
+                  colour=T.MUTED, wrap=300).grid(row=1, column=0, pady=(8, 0))
         self.hist_empty.winfo_children()[1].configure(justify="center")
         self.hist_rows = 0
         self.hist_items: list[ctk.CTkFrame] = []
@@ -307,6 +308,13 @@ class DownloadView(ctk.CTkFrame):
             self.playlist.grid(row=self.playlist_row, column=0, sticky="w", pady=(10, 0))
         else:
             self.playlist.grid_remove()
+        # Spotify songs are always saved as audio: show that in the choices instead of a video option looking selected.
+        spotify_music = self._spotify_music()
+        self.mode.set_disabled({"best", "compatible"} if spotify_music else set())
+        if spotify_music and self.mode.get() not in ("mp3", "m4a"):
+            self.mode.set("m4a")
+        elif not spotify_music and self.s.get("dl_mode") in self.mode.buttons and self.mode.get() != self.s["dl_mode"]:
+            self.mode.set(self.s["dl_mode"])  # back to the user's own choice
         self._on_mode(self.mode.get(), save=False)
         self._update_button()
 

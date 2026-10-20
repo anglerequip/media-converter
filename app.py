@@ -24,7 +24,8 @@ from ui import motion as M
 from ui import theme as T
 from ui.convert_view import ConvertView
 from ui.download_view import DownloadView
-from ui.widgets import DetailsLoader, Segmented, Tooltip, fit_text, ghost_button, make_focusable
+from ui.widgets import (DetailsLoader, Segmented, Tooltip, fit_text, ghost_button, make_focusable, style_switch,
+                        use_app_icon)
 
 APP_DIR = Path(__file__).resolve().parent
 if sys.platform == "win32":
@@ -349,10 +350,7 @@ class App(ctk.CTk):
         win.resizable(False, False)
         win.transient(self)
         M.window_fade_in(win, 160)
-        ico = APP_DIR / "assets" / "icon.ico"
-        if ico.exists():
-            if sys.platform == "win32":
-                win.after(250, lambda: win.iconbitmap(str(ico)))
+        use_app_icon(win)
         win.grid_columnconfigure(0, weight=1)
 
         def card(row: int, title: str) -> ctk.CTkFrame:
@@ -374,11 +372,10 @@ class App(ctk.CTk):
                           value=self.settings.get("appearance", "System"))
         theme.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 12))
         anim = ctk.CTkSwitch(c, text="Animations", font=T.font(12, "semibold"), text_color=T.TEXT,
-                             progress_color=T.ACCENT, button_color=("#FFFFFF", "#F1F3F6"),
-                             button_hover_color=("#FFFFFF", "#FFFFFF"), fg_color=T.BORDER_STRONG,
                              switch_width=38, switch_height=20)
         if self.settings.get("animations", True):
             anim.select()
+        style_switch(anim)
         anim.grid(row=2, column=0, sticky="w", padx=16)
         make_focusable(anim)
         anim_note = note(c, "", row=3)
@@ -393,6 +390,7 @@ class App(ctk.CTk):
                                     text_color=T.MUTED)
 
         def toggle_motion() -> None:
+            style_switch(anim)
             self.settings["animations"] = bool(anim.get())
             M.set_enabled(self.settings["animations"] and self.system_motion)
             describe_motion()

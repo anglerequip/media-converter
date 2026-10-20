@@ -18,7 +18,8 @@ from converter.formats import (
 from . import motion as M
 from . import theme as T
 from .widgets import (
-    DashedPanel, FileItem, Segmented, VirtualFileList, icon_circle, make_focusable, scaling, thumb_tile, SmoothProgress, Tooltip, chip, fit_text, ghost_button, human_size,
+    DashedPanel, FileItem, Segmented, VirtualFileList, autohide_scrollbar, icon_circle, make_focusable, scaling,
+    style_switch, thumb_tile, SmoothProgress, Tooltip, chip, fit_text, ghost_button, human_size,
     primary_button, secondary_button, set_primary_enabled, style_chip,
 )
 
@@ -88,21 +89,30 @@ def option_menu(parent, values, command, value) -> ctk.CTkOptionMenu:
 
 
 def switch(parent, text: str, value: bool, command) -> ctk.CTkSwitch:
-    s = ctk.CTkSwitch(parent, text=text, command=command, font=T.font(12, "semibold"), text_color=T.TEXT,
-                      progress_color=T.ACCENT, button_color=("#FFFFFF", "#F1F3F6"), button_hover_color=("#FFFFFF", "#FFFFFF"),
-                      fg_color=T.BORDER_STRONG, switch_width=38, switch_height=20)
+    def changed() -> None:
+        style_switch(s)
+        command()
+
+    # Sized to its label (CTkSwitch is 100 px wide otherwise), so the whole label is part of the switch.
+    width = round(T.font(12, "semibold").measure(text)) + 38 + 24
+    s = ctk.CTkSwitch(parent, text=text, command=changed, font=T.font(12, "semibold"), text_color=T.TEXT,
+                      switch_width=38, switch_height=20, width=width)
     if value:
         s.select()
+    style_switch(s)
     make_focusable(s)
     return s
 
 
-def help_text(parent, text: str = "", colour=T.MUTED, indent: int = 0) -> ctk.CTkLabel:
+def help_text(parent, text: str = "", colour=T.MUTED, indent: int = 0, wrap: int | None = None) -> ctk.CTkLabel:
     """A muted explanation that wraps to the width its container actually has (minus `indent`, the label's own left
-    and right padding), so it never runs past the edge of the panel at any window size."""
+    and right padding), so it never runs past the edge of the panel at any window size. A fixed `wrap` width is for
+    labels whose container takes its size from them (a centred message), where following it would only shrink."""
     label = ctk.CTkLabel(parent, text=text, font=T.font(11), text_color=colour, justify="left", anchor="w",
-                         wraplength=260)
-    label._mc_wrap = 260
+                         wraplength=wrap or 260)
+    label._mc_wrap = wrap or 260
+    if wrap:
+        return label
 
     def rewrap(_e=None) -> None:
         width = round(parent.winfo_width() / scaling(parent)) - indent - 4
@@ -258,6 +268,7 @@ class ConvertView(ctk.CTkFrame):
             scrollbar_button_hover_color=T.BORDER_STRONG)
         sp.grid(row=0, column=0, sticky="nsew", padx=(6, 2), pady=6)
         sp.grid_columnconfigure(0, weight=1)
+        autohide_scrollbar(sp)
         px = (10, 8)
 
         # -- output format
@@ -415,10 +426,10 @@ class ConvertView(ctk.CTkFrame):
             if animate and M.enabled():
                 target = M.natural_height(self.adv_body)
                 M.collapse_now(self.adv_body)
-                self.adv_body.grid(row=1, column=0, sticky="ew", padx=(4, 0))
+                self.adv_body.grid(row=1, column=0, sticky="ew", padx=(9, 0))
                 M.expand(self.adv_body, target, done=lambda: self.settings_panel._parent_canvas.yview_moveto(1.0))
             else:
-                self.adv_body.grid(row=1, column=0, sticky="ew", padx=(4, 0))
+                self.adv_body.grid(row=1, column=0, sticky="ew", padx=(9, 0))
         elif animate and self.adv_body.winfo_ismapped():
             M.collapse(self.adv_body, done=self.adv_body.grid_remove)
         else:
@@ -757,7 +768,9 @@ class ConvertView(ctk.CTkFrame):
             self.save_change.grid()
 
         show(self.sec_adv, True)
-        self.sec_adv.grid_configure(pady=(18, 12))
+        # The toggle is a button whose text sits 9 px in from its edge: shift the section so its heading lines up
+        # with the other headings, and give its contents those 9 px back.
+        self.sec_adv.grid_configure(pady=(18, 12), padx=(1, 8))
 
     def _refresh_status(self) -> None:
         if self.busy:
@@ -877,7 +890,9 @@ class ConvertView(ctk.CTkFrame):
                     _, fraction, n, total, name, text = ev
                     self.total.glide(fraction)
                     self.status_title.configure(text=f"Converting {n} of {total}  ·  {fraction * 100:.0f}%", text_color=T.TEXT)
-                    self.status_detail.configure(text=fit_text(f"{name}  ·  {text}", T.font(12), 420), text_color=T.MUTED)
+                    step = f"  ·  {text}"  # shorten only the file name, so the current step stays readable
+                    name = fit_text(name, T.font(12), 420 - T.font(12).measure(step))
+                    self.status_detail.configure(text=name + step, text_color=T.MUTED)
                 elif kind == "output":
                     self.last_output = ev[1]
                 elif kind == "finished":

@@ -119,6 +119,54 @@ def make_focusable(button, ring: tuple[str, str] = T.FOCUS) -> None:
     canvas.bind("<space>", activate, add="+")
 
 
+# Switch colours as (light, dark). CTk draws the knob larger than the track, so in light mode a white knob vanished
+# against the white panel and the switch looked cut off: there the knob takes the accent colour when on and a mid
+# grey when off. Dark mode keeps a white knob, which already stands out.
+_SWITCH_ON_KNOB, _SWITCH_OFF_KNOB = (T.ACCENT[0], "#FFFFFF"), ("#7C838D", "#C9CED6")
+_SWITCH_ON_TRACK, _SWITCH_OFF_TRACK = ("#B9D5F2", T.ACCENT[1]), ("#D9DDE3", "#4A505A")
+
+
+def style_switch(s) -> None:
+    """Colour a CTkSwitch for its current state; call again after it changes."""
+    on = bool(s.get())
+    s.configure(progress_color=_SWITCH_ON_TRACK, fg_color=_SWITCH_OFF_TRACK,
+                button_color=_SWITCH_ON_KNOB if on else _SWITCH_OFF_KNOB,
+                button_hover_color=_SWITCH_ON_KNOB if on else _SWITCH_OFF_KNOB)
+
+
+def autohide_scrollbar(frame: ctk.CTkScrollableFrame, colour=T.BORDER, hover=T.BORDER_STRONG) -> None:
+    """Show a scrollable panel's scrollbar only when its content is taller than the panel. The bar keeps its place
+    and just turns invisible, so the content never shifts sideways when it comes and goes."""
+    canvas, bar = frame._parent_canvas, frame._scrollbar
+    state = {"shown": True}
+
+    def check(_e=None) -> None:
+        try:
+            needed = frame.winfo_reqheight() > canvas.winfo_height() + 1
+        except tk.TclError:
+            return
+        if needed != state["shown"]:
+            state["shown"] = needed
+            behind = frame._parent_frame.cget("fg_color")
+            if behind == "transparent":
+                behind = frame._parent_frame.cget("bg_color")
+            bar.configure(button_color=colour if needed else behind, button_hover_color=hover if needed else behind)
+
+    frame.bind("<Configure>", check, add="+")
+    canvas.bind("<Configure>", check, add="+")
+    frame.after(300, check)
+
+
+def use_app_icon(window) -> None:
+    """Give a dialog the app's icon. CTkToplevel sets its own default icon about 200 ms after it opens, so ours goes
+    on after that. (macOS dialogs have no icon in their title bar.)"""
+    if sys.platform != "win32":
+        return
+    ico = Path(__file__).resolve().parent.parent / "assets" / "icon.ico"
+    if ico.exists():
+        window.after(250, lambda: window.winfo_exists() and window.iconbitmap(str(ico)))
+
+
 def bind_tree(widget, sequence: str, func, add: str = "+") -> None:
     widget.bind(sequence, func, add=add)
     for child in widget.winfo_children():
@@ -250,6 +298,7 @@ class Segmented(ctk.CTkFrame):
         self.buttons: dict[str, ctk.CTkButton] = {}
         self.icons: dict[str, str | None] = {}
         self.value: str | None = None
+        self.disabled: set[str] = set()
         for i, (val, label, tip, icon_name) in enumerate(options):
             b = ctk.CTkButton(
                 self, text=label, height=height - 6, corner_radius=T.RADIUS_SMALL, border_width=1,
@@ -274,19 +323,33 @@ class Segmented(ctk.CTkFrame):
             return
         first = self.value is None
         self.value = value
-        for val, b in self.buttons.items():
-            active = val == value
-            icon_name = self.icons[val]
-            M.paint(
-                b, duration=0 if first else M.NORMAL,
-                fg_color=T.SURFACE if active else T.SURFACE_ALT,
-                hover_color=T.SURFACE if active else T.SURFACE_HOVER,
-                text_color=T.TEXT if active else T.MUTED,
-                border_color=T.BORDER_STRONG if active else T.SURFACE_ALT,
-                image=T.icon(icon_name, 15, T.ACCENT_TEXT if active else T.MUTED) if icon_name else None,
-            )
+        self._paint(0 if first else M.NORMAL)
         if notify and self.command:
             self.command(value)
+
+    def set_disabled(self, values) -> None:
+        """Grey out options that don't apply right now (they can't be chosen or reached with Tab)."""
+        values = set(values)
+        if values == self.disabled:
+            return
+        self.disabled = values
+        for val, b in self.buttons.items():
+            b.configure(state="disabled" if val in values else "normal")
+        self._paint(M.NORMAL)
+
+    def _paint(self, duration: int) -> None:
+        for val, b in self.buttons.items():
+            active, off = val == self.value, val in self.disabled
+            icon_name = self.icons[val]
+            text = T.FAINT if off else T.TEXT if active else T.MUTED
+            M.paint(
+                b, duration=duration,
+                fg_color=T.SURFACE if active else T.SURFACE_ALT,
+                hover_color=T.SURFACE if active else T.SURFACE_HOVER,
+                text_color=text, text_color_disabled=T.FAINT,
+                border_color=T.BORDER_STRONG if active else T.SURFACE_ALT,
+                image=T.icon(icon_name, 15, T.FAINT if off else T.ACCENT_TEXT if active else T.MUTED) if icon_name else None,
+            )
 
     def get(self) -> str | None:
         return self.value
@@ -731,7 +794,7 @@ class FileRow(ctk.CTkFrame):
         if row <= 50:  # not laid out yet
             self.name.configure(text=self.item.path.name)
             return
-        side = max(T.font(11, "semibold").measure(self.status.cget("text")) + 12,  # + the badge's rounded ends
+        side = max(T.font(11, "semibold").measure(self.status.cget("text")) + 28,  # + the badge's rounded ends, air
                    T.font(11).measure(self.result.cget("text")))
         # thumbnail column (10 + 44 + 12), status column padding (8 + 4), action button and its padding, some air
         reserved = 66 + 12 + self.action.winfo_reqwidth() / k + 8 + 10
@@ -750,9 +813,15 @@ class FileRow(ctk.CTkFrame):
         label, fg, bg = STATUS_STYLE[item.state]
         if item.state == "working" and item.fraction is not None:
             label = f"{label} {item.fraction * 100:.0f}%"
-        self.status.configure(text=f"  ●  {label}  ", cursor="hand2" if item.state in ("failed", "done") else "")
         state_changed = self._shown_state is None or self._shown_state[0] != item.state
-        M.fade(self.status, M.NORMAL if (animate and state_changed) else 0, text_color=fg, fg_color=bg)
+        if item.state == "ready":  # nothing has happened to this file yet: no badge, less clutter
+            M.cancel(self.status, "colour")
+            self.status.configure(text="", fg_color="transparent", cursor="")
+        else:
+            self.status.configure(text=f"  ●  {label}  ", cursor="hand2" if item.state in ("failed", "done") else "")
+            from_nothing = self._shown_state is None or self._shown_state[0] == "ready"
+            M.fade(self.status, M.NORMAL if (animate and state_changed and not from_nothing) else 0,
+                   text_color=fg, fg_color=bg)
         if item.state == "working":
             if not self.bar.winfo_manager():  # placed already? (it may not be drawn yet, so not winfo_ismapped)
                 self.bar.place(in_=self.meta, relx=0, rely=1.0, y=4, relwidth=1.0, anchor="nw")
@@ -781,7 +850,8 @@ class FileRow(ctk.CTkFrame):
                 self.result.configure(text=fit_text(item.detail, T.font(11), 260, end=True), text_color=T.WARNING, cursor="")
             else:
                 self.result.configure(text="", cursor="")
-            self.action.configure(image=T.icon("close", 15, T.MUTED), state="disabled" if self.locked else "normal")
+            self.action.configure(image=T.icon("close", 15, T.FAINT if self.locked else T.MUTED),  # dimmed while locked
+                                  state="disabled" if self.locked else "normal")
             self.action_tip.set("Remove from list")
         self._shown_state = key
         self._fit_name()  # the badge and result line may have grown or shrunk
