@@ -160,7 +160,7 @@ jobs:
       - name: Combine the fingerprints
         run: |
           cd dist
-          cat SHA256SUMS.txt SHA256SUMS-mac-*.txt > SHA256SUMS-all.txt
+          cat SHA256SUMS.txt SHA256SUMS-mac-*.txt | tr -d '\r' > SHA256SUMS-all.txt  # one kind of line ending, so every checker can read it
           mv SHA256SUMS-all.txt SHA256SUMS.txt
           rm SHA256SUMS-mac-*.txt
           sha256sum -c SHA256SUMS.txt

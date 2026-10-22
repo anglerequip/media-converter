@@ -106,7 +106,16 @@ DMG="dist/MediaConverter-mac-$ARCH_NAME.dmg"
 STAGE=$(mktemp -d)
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
-hdiutil create -quiet -volname "Media Converter" -srcfolder "$STAGE" -fs HFS+ -format ULMO -ov "$DMG"  # LZMA: smaller than UDZO; opens on macOS 10.15+
+# LZMA (ULMO): smaller than UDZO; opens on macOS 10.15+. hdiutil sometimes fails for a moment ("Resource busy")
+# while macOS scans the new image, mostly on GitHub's Intel runners, so it gets a few tries, and its error is shown.
+for attempt in 1 2 3 4 5; do
+  if hdiutil create -volname "Media Converter" -srcfolder "$STAGE" -fs HFS+ -format ULMO -ov "$DMG"; then
+    break
+  fi
+  [ "$attempt" -lt 5 ] || fail "hdiutil could not create the disk image"
+  echo "hdiutil failed (try $attempt of 5); trying again in 15 s"
+  sleep 15
+done
 rm -rf "$STAGE"
 
 # ---------------------------------------------------------------- fingerprints + build record
