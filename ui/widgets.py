@@ -6,6 +6,7 @@ import io
 import queue
 import subprocess
 import sys
+import time
 import tkinter as tk
 import tkinter.font as tkfont
 from dataclasses import dataclass, field
@@ -385,9 +386,11 @@ class Segmented(ctk.CTkFrame):
             return
         self.value = value
         self._update_cursor()
-        self._glide()
         if notify and self.command:
             self.command(value)
+        # Glide once whatever the choice changed has been drawn (a whole screen, after a switch), so the pill
+        # gets the event loop to itself instead of stepping slowly while that repaint is going on.
+        self.after_idle(self._glide)
 
     def set_disabled(self, values) -> None:
         """Grey out options that don't apply right now (they can't be chosen with the mouse or keyboard)."""
@@ -439,6 +442,19 @@ class Segmented(ctk.CTkFrame):
             self._pill = [r[0], r[2]]
         self._shown.clear()
         self._paint()
+        self.after(400, self._prewarm)
+
+    def _prewarm(self) -> None:
+        """Draw each icon's in-between colours ahead of time, while nothing is happening, so the first glide
+        doesn't stall to make them."""
+        if not self.winfo_exists():
+            return
+        res, px = T.resolve, round(self.ICON * self._scale)
+        muted, text, accent = res(T.MUTED), res(T.TEXT), res(T.ACCENT_TEXT)
+        for name in {n for n in self.icons.values() if n}:
+            for base in (muted, text):
+                for i in range(9):
+                    _glyph_image(name, px, _mix(base, accent, i / 8))
 
     def _glide(self) -> None:
         goal = self._rects.get(self.value)
@@ -602,6 +618,7 @@ class SmoothProgress(ctk.CTkProgressBar):
         self._value = 0.0
         self._target = 0.0
         self._job = None
+        self._last = 0.0
         super().set(0)
 
     def glide(self, value: float) -> None:
@@ -613,6 +630,8 @@ class SmoothProgress(ctk.CTkProgressBar):
             self._value = self._target
             super().set(self._value)
         if self._job is None:
+            self._last = time.perf_counter()
+            M.hold_precise_timer(self, True)
             self._step()
 
     def jump(self, value: float) -> None:
@@ -621,14 +640,17 @@ class SmoothProgress(ctk.CTkProgressBar):
 
     def _step(self) -> None:
         diff = self._target - self._value
-        if abs(diff) < 0.002:
+        if abs(diff) < 0.002 or not self.winfo_exists():
             self._value = self._target
             super().set(self._value)
             self._job = None
+            M.hold_precise_timer(self, False)
             return
-        self._value += diff * 0.25
+        now = time.perf_counter()
+        dt, self._last = min(now - self._last, 0.05), now
+        self._value += diff * (1 - 0.75 ** (dt / 0.016))  # the same glide at any step rate
         super().set(self._value)
-        self._job = self.after(16, self._step)
+        self._job = self.after(M.next_delay(now), self._step)
 
 
 # ----------------------------------------------------------------------------- drop zone

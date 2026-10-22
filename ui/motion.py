@@ -15,12 +15,14 @@ from typing import Callable
 
 import customtkinter as ctk
 
-FRAME_MS = 15
+FRAME_MS = 4  # 200+ steps a second (each step also takes ~1 ms to draw); the screen shows what its refresh rate allows
 STALL_MS = 45
 FAST, NORMAL, SLOW = 120, 180, 260
 
 _enabled = True
 _jobs: dict[tuple[str, str], str] = {}
+_holders: set = set()  # other smooth movers (the progress bars) that need the precise timer too
+_precise = False
 
 
 # ----------------------------------------------------------------------------- switches
@@ -77,6 +79,33 @@ def ease_in_out(t: float) -> float:
     return 4 * t ** 3 if t < 0.5 else 1 - (-2 * t + 2) ** 3 / 2
 
 
+def next_delay(step_started: float) -> int:
+    """Wait for the rest of the frame: FRAME_MS minus what drawing this step already took."""
+    return max(1, round(FRAME_MS - (time.perf_counter() - step_started) * 1000))
+
+
+def _sync_timer() -> None:
+    """Windows normally wakes timers only every 15.6 ms, which caps animations near 64 frames a second. While
+    anything is moving, ask for 1 ms timer precision so steps can come every few milliseconds; hand it back the moment
+    everything is still, so an idle app costs nothing extra."""
+    global _precise
+    want = bool(_jobs or _holders)
+    if want == _precise or sys.platform != "win32":
+        return
+    _precise = want
+    try:
+        import ctypes
+
+        (ctypes.windll.winmm.timeBeginPeriod if want else ctypes.windll.winmm.timeEndPeriod)(1)
+    except Exception:
+        pass
+
+
+def hold_precise_timer(owner, on: bool) -> None:
+    (_holders.add if on else _holders.discard)(owner)
+    _sync_timer()
+
+
 def running(widget, key: str) -> bool:
     return (str(widget), key) in _jobs
 
@@ -88,6 +117,7 @@ def cancel(widget, key: str) -> None:
             widget.after_cancel(job)
         except tk.TclError:
             pass
+        _sync_timer()
 
 
 def animate(widget, key: str, duration: int, step: Callable[[float], None],
@@ -107,6 +137,7 @@ def animate(widget, key: str, duration: int, step: Callable[[float], None],
         try:
             if not widget.winfo_exists():
                 _jobs.pop(ident, None)
+                _sync_timer()
                 return
             now = time.perf_counter()
             if now - clock["last"] > STALL_MS / 1000:  # treat a stall as a pause
@@ -115,13 +146,16 @@ def animate(widget, key: str, duration: int, step: Callable[[float], None],
             t = min(1.0, (now - clock["start"]) * 1000 / duration)
             step(ease(t))
             if t < 1.0:
-                _jobs[ident] = widget.after(FRAME_MS, tick)
+                _jobs[ident] = widget.after(next_delay(now), tick)
+                _sync_timer()
             else:
                 _jobs.pop(ident, None)
+                _sync_timer()
                 if done:
                     done()
         except tk.TclError:  # the widget went away mid-animation
             _jobs.pop(ident, None)
+            _sync_timer()
 
     tick()
 
